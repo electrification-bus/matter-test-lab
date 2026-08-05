@@ -1,0 +1,42 @@
+---
+# Make apt usable on a freshly-flashed Ubuntu Pi. Two quirks the Pi image has:
+#  1. On first boot, apt-daily / unattended-upgrades holds the dpkg lock for a
+#     few minutes, so any apt run (ours or a vendor script's) fails to get it.
+#  2. The image enables only the base and "-security" apt pockets, so updated
+#     -dev packages are missing and conflict with security-patched runtime libs
+#     (e.g. libdbus-1-dev wants libdbus-1-3 =X but X.1 is installed).
+# Consumed by both th.yml and dut.yml.
+
+- name: Stop background apt timers so they don't grab the dpkg lock mid-run
+  become: true
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+  failed_when: false
+
+- name: Wait for any in-progress apt/dpkg lock to be released
+  become: true
+  ansible.builtin.shell: |
+    for i in $(seq 1 120); do
+      if ! fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock \
+                 /var/cache/apt/archives/lock >/dev/null 2>&1; then
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "apt lock still held after 10 min" >&2; exit 1
+  args:
+    executable: /bin/bash
+  changed_when: false
+
+- name: Enable the -updates and -backports apt pockets for {{ expected_ubuntu_release }}
+  become: true
+  ansible.builtin.replace:
+    path: /etc/apt/sources.list.d/ubuntu.sources
+    regexp: '^Suites: {{ expected_ubuntu_release }}$'
+    replace: >-
+      Suites: {{ expected_ubuntu_release }}
+      {{ expected_ubuntu_release }}-updates {{ expected_ubuntu_release }}-backports

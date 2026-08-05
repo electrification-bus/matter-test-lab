@@ -1,0 +1,19 @@
+---
+# TEMPLATE. Not read by Ansible from here. Copy it into place:
+#
+#   mkdir -p host_vars
+#   cp examples/host_vars/MatterTH.local.yml host_vars/
+#
+# The filename must match the inventory host exactly. host_vars/ is gitignored,
+# so your test event coordinates never get committed.
+#
+# FOR DEVELOPMENT USE YOU DO NOT NEED THIS FILE AT ALL. The defaults install a
+# published Test Harness release and require no configuration.
+
+# Switch to test event mode. In this mode th_version below is REQUIRED and the
+# playbook refuses to guess, because using anything other than the tag your
+# event pins would invalidate your results.
+# lab_mode: event
+
+# The Test Harness tag your test event pins. Required when lab_mode is "event".
+# th_version: "v2.14+fall2025-tag"

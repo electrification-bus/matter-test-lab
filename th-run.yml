@@ -1,0 +1,151 @@
+---
+# Run a Matter test (or list) against the DUT via th-cli on the TH, headless, and
+# collect the logs to the control machine. Drives the CLI over SSH (the API isn't
+# exposed off-box; see README). The DUT app must already be running and
+# commissionable: ansible-playbook dut.yml --tags run
+#
+# Run:  ansible-playbook th-run.yml                      # TC-ACL-2.1 (default)
+#       ansible-playbook th-run.yml -e th_tests=TC-DD-3.20
+#       ansible-playbook th-run.yml -e th_pics_folder=/home/ubuntu/pics
+#   Re-fetch logs for an existing run only:
+#       ansible-playbook th-run.yml --tags collect -e test_run_id=2
+#
+# Logs are fetched into th_log_stage (default ./results/, which is gitignored so
+# test artifacts never land in git by accident). How you then submit them is
+# defined by your own test event; this repo does not encode any submission
+# process.
+
+- name: Run certification test(s) via th-cli and collect logs
+  hosts: th
+  gather_facts: true
+
+  vars:
+    th_tests: "TC-ACL-2.1"                                  # comma-separated list ok
+    th_pics_folder: ""                                      # optional PICS folder ON THE TH; you supply it
+    th_prompt_answer: "1"                                   # option fed to manual prompts (1=DONE, 2=FAILED)
+    th_run_config: "/home/{{ ansible_user }}/run-config.json"
+    test_run_id: ""                                           # set via -e for --tags collect
+
+  tasks:
+    - name: Write the TH run config (dut_config from group_vars)
+      ansible.builtin.copy:
+        dest: "{{ th_run_config }}"
+        mode: "0644"
+        content: |
+          {
+            "network": {
+              "fabric_id": "0",
+              "thread": {
+                "dataset": {
+                  "channel": "15",
+                  "panid": "0x1234",
+                  "extpanid": "1111111122222222",
+                  "networkkey": "00112233445566778899aabbccddeeff",
+                  "networkname": "DEMO"
+                },
+                "rcp_serial_path": "/dev/ttyACM0", "rcp_baudrate": 115200,
+                "on_mesh_prefix": "fd11:22::/64", "network_interface": "eth0",
+                "ba_host": "127.0.0.1", "ba_port": 5684
+              },
+              "wifi": {"ssid": "testharness", "password": "wifi-password"}
+            },
+            "dut_config": {
+              "pairing_mode": "{{ dut_pairing_mode }}",
+              "setup_code": "{{ dut_setup_code }}",
+              "discriminator": "{{ dut_discriminator }}",
+              "chip_use_paa_certs": false,
+              "trace_log": true
+            },
+            "test_parameters": null
+          }
+      tags: [run]
+
+    # pipefail is deliberately NOT set here, hence the noqa. "yes" is killed by
+    # SIGPIPE the moment th-cli stops reading, which is the normal and expected
+    # end of a successful run. Under pipefail that shows up as exit 141 and
+    # every passing test run would be reported as a failure. The exit status
+    # that matters is th-cli's, which is the one the shell returns without it.
+    - name: Run th-cli (headless; feed '1' to answer DONE prompts) # noqa: risky-shell-pipe
+      ansible.builtin.shell:
+        cmd: >-
+          export PATH="$HOME/.local/bin:$PATH"; cd ~;
+          yes {{ th_prompt_answer }} | th-cli run-tests -t {{ th_tests }} --config {{ th_run_config }}
+          {% if th_pics_folder | length > 0 %}--pics-config-folder {{ th_pics_folder }}{% endif %}
+          --no-color
+        executable: /bin/bash
+      register: th_run
+      changed_when: true
+      tags: [run]
+
+    - name: Show run output
+      ansible.builtin.debug:
+        var: th_run.stdout_lines
+      tags: [run]
+
+    - name: Extract run id and run-log path from output
+      ansible.builtin.set_fact:
+        test_run_id: "{{ th_run.stdout | regex_findall('- ID: (\\d+)') | first | default('', true) }}"
+        test_run_log: "{{ th_run.stdout | regex_findall('Log output in: (\\S+)') | first | default('', true) }}"
+      tags: [run]
+
+    - name: Require a run id before collecting logs
+      ansible.builtin.assert:
+        that: test_run_id | string | length > 0
+        fail_msg: >-
+          No test run id available. On a fresh run th-cli's output should contain
+          '- ID: N'; for --tags collect pass -e test_run_id=N.
+      tags: [run, collect]
+
+    - name: Download the grouped log archive for this run
+      ansible.builtin.shell:
+        cmd: >-
+          export PATH="$HOME/.local/bin:$PATH";
+          th-cli test-run-execution log --id {{ test_run_id }} --grouped
+          -o /home/{{ ansible_user }}/run{{ test_run_id }}-grouped.zip
+        executable: /bin/bash
+      changed_when: true
+      tags: [run, collect]
+
+    - name: Locate trace logs on the TH
+      become: true
+      ansible.builtin.find:
+        paths: /var/tmp
+        patterns: "trace_log_*.log"
+      register: trace_logs
+      tags: [run, collect]
+
+    - name: Fetch the grouped log archive to the control machine
+      ansible.builtin.fetch:
+        src: "/home/{{ ansible_user }}/run{{ test_run_id }}-grouped.zip"
+        dest: "{{ th_log_stage }}/"
+        flat: true
+      tags: [run, collect]
+
+    - name: Fetch the run log
+      ansible.builtin.fetch:
+        src: "{{ test_run_log | regex_replace('^\\./', '/home/' + ansible_user + '/') }}"
+        dest: "{{ th_log_stage }}/"
+        flat: true
+      when: test_run_log | length > 0
+      tags: [run]
+
+    - name: Fetch the newest non-empty trace logs
+      become: true
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ th_log_stage }}/"
+        flat: true
+      loop: "{{ (trace_logs.files | selectattr('size', 'gt', 0) | sort(attribute='mtime') | reverse | list)[:2] }}"
+      loop_control:
+        label: "{{ item.path }}"
+      tags: [run, collect]
+
+    - name: Report collected logs
+      ansible.builtin.debug:
+        msg: >-
+          Run {{ test_run_id }} done{{ ' (' ~ results_owner ~ ')' if results_owner | length > 0 else '' }}.
+          Logs staged in {{ th_log_stage }}/: run{{ test_run_id }}-grouped.zip,
+          the run log, and trace log(s). Submit them however your test event
+          requires; keep the original filenames, since submission systems
+          generally key off them.
+      tags: [run, collect]

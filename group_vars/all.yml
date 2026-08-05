@@ -1,0 +1,94 @@
+---
+# =============================================================================
+# matter-test-lab: configuration common to both Pis.
+#
+# Per-role settings live in group_vars/th.yml and group_vars/dut.yml.
+#
+# To override without editing tracked files, put your values in
+# host_vars/<host>.yml, which is gitignored. See examples/ for templates.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Which of the two use cases is this? The most important setting here.
+#
+#   development (default)
+#     You are building a Matter device and want to run real certification test
+#     cases against it as you go, long before any formal event. Everything used
+#     is public: the Test Harness and all three of its submodules are public
+#     repositories cloned over HTTPS, and the test content comes from the public
+#     Matter SDK. NO CSA MEMBERSHIP AND NO CREDENTIALS ARE REQUIRED.
+#     th_version and sdk_sha default to the published values below, so you can
+#     run this with no configuration at all.
+#
+#   event
+#     You are participating in a CSA test event. The event pins a specific Test
+#     Harness tag and a specific SDK commit, and you MUST use those exact
+#     values. In this mode both are required and unset ones fail immediately
+#     with an explanation, because silently defaulting to something else would
+#     invalidate your results.
+#
+# This repo ships no test event coordinates in either mode: no event tag, no
+# pinned commit, no PICS files, no test plans. Those come from your own test
+# event materials. See README.md.
+lab_mode: development
+# -----------------------------------------------------------------------------
+
+# The login user on both Pis. The Test Harness requires exactly "ubuntu"
+# (project-chip/certification-tool issue #342), and verify_target asserts it, so
+# changing this fails fast rather than late.
+ansible_user: ubuntu
+
+# Password for the "ubuntu" user on freshly-flashed Pis.
+#
+# These are throwaway devices, reflashed between events, so plaintext here is a
+# deliberate convenience rather than an oversight. It is used only by flash-pi
+# (to set the console password) and bootstrap-keys.yml (to install your key on a
+# Pi flashed some other way). The playbooks themselves connect over SSH keys.
+# For anything longer-lived, encrypt it:
+#   ansible-vault encrypt_string 'yourpassword' --name ubuntu_password
+ubuntu_password: "changeme"
+
+# Public key flash-pi pre-seeds into cloud-init and bootstrap-keys.yml installs.
+operator_pubkey: "~/.ssh/id_ed25519.pub"
+
+# --- Expected OS on the Pis --------------------------------------------------
+#
+# verify_target asserts the running system matches these, so a wrong or stale
+# flash fails in seconds instead of 45 minutes into a build. The Pi Ubuntu image
+# enables only the base and -security apt pockets; apt_prepare adds -updates and
+# -backports. See docs/pi-image-quirks.md for why.
+expected_ubuntu_version: "24.04"       # ansible_distribution_version
+expected_ubuntu_release: "noble"       # ansible_distribution_release
+expected_architecture: "aarch64"       # ansible_architecture
+
+# Human-readable label used in failure messages. The facts above are what is
+# actually asserted.
+expected_ubuntu_image: "ubuntu-24.04-preinstalled-server-arm64+raspi"
+
+# Image flash-pi downloads and writes. Any 24.04.x point release is fine. The
+# download is verified against the SHA256SUMS published alongside it, so no hash
+# is pinned here.
+ubuntu_image_url: "https://cdimage.ubuntu.com/releases/24.04/release/ubuntu-24.04.4-preinstalled-server-arm64+raspi.img.xz"
+
+# --- Commissioning parameters ------------------------------------------------
+#
+# The contract between the DUT (which launches its example app with these) and
+# the TH (which builds its dut_config from them), so the two cannot drift. These
+# match the example apps' built-in defaults.
+#
+# The discriminator is a 12-bit field and MUST be <= 4095. An out-of-range value
+# makes BOTH the app and the controller VerifyOrDie-abort during commissioning
+# with a confusing SIGABRT that reads like a crash rather than a config error.
+dut_pairing_mode: "onnetwork"   # DutPairingModeEnum; on-network for a Linux/IP DUT
+dut_discriminator: "3840"
+dut_setup_code: "20202021"
+
+# --- Log collection ----------------------------------------------------------
+
+# Where th-run.yml stages fetched logs on the control machine. Gitignored, so
+# test artifacts never land in git by accident.
+th_log_stage: "{{ playbook_dir }}/results"
+
+# Optional label for the participant filing these results, used only in the
+# closing message. Set it to your company or handle if you find it useful.
+results_owner: ""

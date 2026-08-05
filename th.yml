@@ -1,0 +1,200 @@
+---
+# Install and configure the Matter Test Harness (project-chip/certification-tool)
+# on a fresh Ubuntu Pi. Parameterized: all config lives in inventory.ini +
+# group_vars/ (see README.md). No -K needed (cloud-init grants passwordless sudo).
+#
+# Run:  ansible-playbook th.yml
+#   Verify the Pi only:      ansible-playbook th.yml --tags verify
+#   Just the CLI + backend:  ansible-playbook th.yml --tags thcli,backend
+#   Skip the long install:   ansible-playbook th.yml --skip-tags install
+#
+# Tags: verify | install (git clone + auto-install + reboot) | apt | ports |
+#       thcli (install th-cli) | backend (self-heal the backend container)
+
+- name: Install and configure the Matter Test Harness
+  hosts: th
+  gather_facts: true
+
+  tasks:
+    # In event mode this repo ships no coordinates, so fail immediately and
+    # explain, rather than cloning and failing on an unresolvable ref after the
+    # apt work is already done. In development mode a published default is used.
+    - name: Require a Test Harness version
+      ansible.builtin.assert:
+        that: th_version_effective | trim | length > 0
+        fail_msg: >-
+          lab_mode is "event" but th_version is not set. A test event pins a
+          specific Test Harness tag and you must use that exact one, so this
+          repo intentionally ships no value and will not guess: take it from
+          your own test event materials. Set it in host_vars/<your-th-host>.yml
+          or pass -e th_version=<tag>. It must correspond to the same event as
+          the SDK commit the DUT is built from (group_vars/dut.yml: sdk_sha).
+          If you are NOT at a test event, set lab_mode=development instead and a
+          published Test Harness release will be used automatically.
+        success_msg: >-
+          Test Harness {{ th_version_effective | trim }} (lab_mode={{ lab_mode }})
+        quiet: true
+      tags: [verify, install]
+
+    - name: Verify we're on the intended, correctly-flashed Pi
+      ansible.builtin.import_tasks: tasks/verify_target.yml
+      tags: [verify]
+
+    - name: Prepare apt (stop timers, wait for lock, enable pockets)
+      ansible.builtin.import_tasks: tasks/apt_prepare.yml
+      tags: [install, apt]
+
+    - name: Ensure git is installed
+      become: true
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: true
+        lock_timeout: 300
+      tags: [install]
+
+    - name: Clone certification-tool at the pinned tag (with submodules)
+      ansible.builtin.git:
+        repo: "{{ th_repo }}"
+        dest: "{{ th_dest }}"
+        version: "{{ th_version_effective | trim }}"
+        recursive: true
+        force: false
+      tags: [install]
+
+    - name: Run the TH auto-install script (long-running, 20-40+ min)
+      ansible.builtin.shell:
+        cmd: "{{ th_install_script }} </dev/null"
+        chdir: "{{ th_dest }}"
+      register: install_result
+      async: 3600
+      poll: 20
+      # It installs Docker, builds containers and writes config: always a change.
+      changed_when: true
+      # The script only prompts to reboot at the very end (we feed EOF), so it
+      # does not self-reboot. Treat a non-zero rc or its "Exit with Error" banner
+      # as a real failure instead of letting it pass silently.
+      failed_when: >-
+        install_result.rc != 0 or
+        ('Exit with Error' in (install_result.stdout | default('')))
+      tags: [install]
+
+    - name: Show install stderr on failure
+      ansible.builtin.debug:
+        var: install_result.stderr_lines
+      when:
+        - install_result.stderr_lines is defined
+        - install_result.stderr_lines | length > 0
+      tags: [install]
+
+    - name: Reboot the Test Harness to finalize the install
+      become: true
+      ansible.builtin.reboot:
+        reboot_timeout: 900
+        connect_timeout: 30
+        post_reboot_delay: 45
+        msg: "Finalizing Matter Test Harness install"
+      tags: [install]
+
+    - name: Check which web ports the TH is listening on (informational)
+      become: true
+      ansible.builtin.shell:
+        # The trailing "|| true" is load-bearing: no matching port is a normal
+        # result (the stack may still be starting), not a failure.
+        cmd: |
+          set -euo pipefail
+          ss -ltn | grep -E ':({{ th_web_ports }}) ' || true
+        executable: /bin/bash
+      register: th_ports
+      changed_when: false
+      tags: [install, ports]
+
+    - name: Report TH listening ports
+      ansible.builtin.debug:
+        msg: >-
+          TH is back up. Web ports listening:
+          {{ th_ports.stdout_lines
+             | default(['(none yet; give it a minute, then open http://' + expected_hostname + '.local)']) }}
+      tags: [install, ports]
+
+    # --- TH CLI: the scriptable interface (the Survival Guide's preferred mode).
+    # th_cli_install.sh needs pipx + Poetry, which the Pi image lacks.
+    - name: Install pipx (for the TH CLI)
+      become: true
+      ansible.builtin.apt:
+        name: pipx
+        state: present
+        update_cache: true
+        lock_timeout: 300
+      tags: [thcli]
+
+    - name: Install Poetry via pipx (required by th_cli_install.sh)
+      ansible.builtin.shell: |
+        export PATH="$HOME/.local/bin:$PATH"
+        command -v poetry >/dev/null 2>&1 || pipx install poetry
+      args:
+        executable: /bin/bash
+        creates: "{{ ansible_env.HOME }}/.local/share/pipx/venvs/poetry"
+      tags: [thcli]
+
+    - name: Install th-cli
+      ansible.builtin.shell: |
+        export PATH="$HOME/.local/bin:$PATH"
+        cd "{{ th_dest }}/cli" && bash scripts/th_cli_install.sh </dev/null
+      args:
+        executable: /bin/bash
+        creates: "{{ ansible_env.HOME }}/.local/bin/th-cli"
+      tags: [thcli]
+
+    # --- Backend self-heal. The backend clones the SDK during prestart to get the
+    # 'matter' python module; if DNS is flaky during the heavy install that clone
+    # fails and the backend exits(1). DNS recovers afterward, so a restart re-clones
+    # and it comes up. This makes the install resilient to that transient failure.
+    - name: Find the TH backend container
+      become: true
+      ansible.builtin.shell:
+        # "|| true" keeps "no such container" a normal empty result rather than
+        # a failure: the next task is guarded on stdout being non-empty. It is
+        # also what absorbs the SIGPIPE that "head -1" gives the earlier stages
+        # once pipefail is on.
+        cmd: |
+          set -euo pipefail
+          docker ps -a --format '{% raw %}{{.ID}} {{.Image}}{% endraw %}' \
+            | grep -i certification-tool-backend | awk '{print $1}' | head -1 || true
+        executable: /bin/bash
+      register: th_backend_id
+      changed_when: false
+      tags: [backend]
+
+    - name: Start the backend if stopped, then wait for the API to answer
+      become: true
+      ansible.builtin.shell: |
+        set -e
+        C="{{ th_backend_id.stdout }}"
+        [ -n "$C" ] || { echo "no backend container found"; exit 1; }
+        running=$(docker inspect -f '{% raw %}{{.State.Running}}{% endraw %}' "$C")
+        [ "$running" = "true" ] || docker start "$C"
+        for i in $(seq 1 60); do
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
+                 http://localhost/api/v1/test_run_executions/status || echo 000)
+          [ "$code" = "200" ] && { echo READY; exit 0; }
+          st=$(docker inspect -f '{% raw %}{{.State.Status}}{% endraw %}' "$C")
+          [ "$st" = "exited" ] && { echo "backend exited:"; docker logs --tail 30 "$C"; exit 1; }
+          sleep 10
+        done
+        echo "backend API not ready after 10m"; exit 1
+      args:
+        executable: /bin/bash
+      register: th_backend_health
+      changed_when: "'READY' in th_backend_health.stdout"
+      when: th_backend_id.stdout | length > 0
+      tags: [backend]
+
+    - name: Report backend health
+      ansible.builtin.debug:
+        msg: >-
+          TH backend:
+          {{ 'READY (API 200)'
+             if (th_backend_health.stdout is defined and 'READY' in th_backend_health.stdout)
+             else (th_backend_health.stdout | default('not checked')) }}
+      tags: [backend]

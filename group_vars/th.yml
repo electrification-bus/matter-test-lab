@@ -1,0 +1,43 @@
+---
+# Test Harness: project-chip/certification-tool.
+#
+# The whole stack is public. The top-level repo and all three of its submodules
+# (backend, frontend, cli) are public repositories cloned over HTTPS, and the
+# test content comes from the public Matter SDK. Installing a Test Harness
+# requires no CSA membership and no credentials.
+
+th_repo: "https://github.com/project-chip/certification-tool.git"
+
+# --- Which Test Harness version --------------------------------------------
+#
+# In lab_mode: development, th_version_development below is used and you need
+# set nothing.
+#
+# In lab_mode: event, th_version is REQUIRED and this repo ships no value,
+# because the tag your event pins is not ours to distribute. Take it from your
+# own test event materials. The tag for an in-progress event is often not yet
+# published on the public repo even though the repo itself is public.
+#
+# Set it in host_vars/<your-th-host>.yml, or for one run:
+#   ansible-playbook th.yml -e th_version=<tag>
+th_version: ""
+
+# The newest published stable tag at the time of writing, used in development
+# mode. Deliberately pinned rather than resolved at runtime, so two people
+# running this get the same Test Harness. Bump it as upstream publishes new
+# ones; to see what is currently published:
+#   git ls-remote --tags https://github.com/project-chip/certification-tool.git
+th_version_development: "v2.14+fall2025-tag"
+
+# Resolved from the two above according to lab_mode. This is what the playbook
+# actually clones; nothing reads th_version directly.
+th_version_effective: >-
+  {{ th_version if th_version | length > 0
+     else (th_version_development if lab_mode == 'development' else '') }}
+
+th_dest: "/home/{{ ansible_user }}/certification-tool"
+th_install_script: "./scripts/pi-setup/auto-install.sh"
+
+# Web ports the TH may listen on after install. Informational readiness check
+# only; nothing is configured from this.
+th_web_ports: "80|443|8000|4200"

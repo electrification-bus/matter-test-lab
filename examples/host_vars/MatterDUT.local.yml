@@ -1,0 +1,25 @@
+---
+# TEMPLATE. Not read by Ansible from here. Copy it into place:
+#
+#   mkdir -p host_vars
+#   cp examples/host_vars/MatterDUT.local.yml host_vars/
+#
+# The filename must match the inventory host exactly. host_vars/ is gitignored,
+# so your test event coordinates never get committed.
+#
+# YOU MAY NOT NEED A DUT PI AT ALL. The Test Harness tests any commissionable
+# Matter device, so if you are developing your own hardware, leave the [dut]
+# inventory group empty, skip dut.yml, and set the commissioning parameters in
+# group_vars/all.yml to match your device.
+
+# Switch to test event mode. In this mode sdk_sha below is REQUIRED.
+# lab_mode: event
+
+# The SDK commit your test event pins. Required when lab_mode is "event", and it
+# must correspond to the same event as th_version on the Test Harness.
+# sdk_sha: "0000000000000000000000000000000000000000"
+
+# Build a different example app as the reference DUT. Change all three together.
+# dut_example_path: "examples/lighting-app/linux"
+# dut_out_dir: "out/debug"
+# dut_app_binary: "chip-lighting-app"

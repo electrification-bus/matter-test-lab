@@ -1,0 +1,49 @@
+---
+# DUT: a connectedhomeip example app built natively on the second Pi.
+#
+# THIS PLAYBOOK IS OPTIONAL. The Test Harness will happily test any
+# commissionable Matter device, so if you are developing your own device you can
+# skip dut.yml entirely, leave the [dut] inventory group empty, and just point
+# the commissioning parameters in group_vars/all.yml at your hardware. Use this
+# when you want a known-good reference DUT: for practising the loop before your
+# device is ready, or for isolating whether a failure is your device or your lab.
+
+sdk_repo: "https://github.com/project-chip/connectedhomeip.git"
+
+# --- Which SDK version ------------------------------------------------------
+#
+# In lab_mode: development, sdk_version_development below is used and you need
+# set nothing.
+#
+# In lab_mode: event, sdk_sha is REQUIRED and this repo ships no value. The
+# event pins a specific commit and the DUT must be built from the same one the
+# Test Harness is built from (group_vars/th.yml: th_version). A mismatched pair
+# produces failures that look like device bugs and are not. The commit itself
+# lives in a public repo; which commit your event pins is not ours to publish.
+#
+# Set it in host_vars/<your-dut-host>.yml, or for one run:
+#   ansible-playbook dut.yml -e sdk_sha=<40-char-sha>
+sdk_sha: ""
+
+# Used in development mode. A branch is fine here: you are iterating, not
+# producing certifiable results. Pin a SHA if you want reproducibility.
+sdk_version_development: "master"
+
+# Resolved from the two above according to lab_mode. This is what the playbook
+# actually checks out; nothing reads sdk_sha directly.
+sdk_version_effective: >-
+  {{ sdk_sha if sdk_sha | length > 0
+     else (sdk_version_development if lab_mode == 'development' else '') }}
+
+sdk_dest: "/home/{{ ansible_user }}/connectedhomeip"
+
+# Which example app to build as the reference DUT, relative to the SDK root,
+# and the binary it produces. Change all three together.
+dut_example_path: "examples/all-clusters-app/linux"
+dut_out_dir: "out/debug"
+dut_app_binary: "chip-all-clusters-app"
+
+# Commissioning parameters (dut_pairing_mode / dut_discriminator /
+# dut_setup_code) live in group_vars/all.yml, because both this playbook's
+# 'run' tag and th-run.yml need them and they must not drift. If you are
+# bringing your own DUT, those are the only values you need to set.

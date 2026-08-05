@@ -1,0 +1,48 @@
+---
+# One-time onboarding for a freshly-flashed Pi: connect with the ubuntu password
+# and install your SSH public key, so every later playbook run uses key auth.
+#
+# Requires sshpass on the control machine (macOS: `brew install hudochenkov/sshpass/sshpass`).
+# The password comes from group_vars/all.yml (ubuntu_password); the key from
+# operator_pubkey. Forcing password auth avoids the "Too many authentication
+# failures" you hit when the agent offers many keys before the password.
+#
+# Run:  ansible-playbook bootstrap-keys.generic.yml
+#   (or target one group:  -l th   /   -l dut)
+#
+# Manual alternative (no sshpass needed):
+#   ssh-copy-id -o PreferredAuthentications=password -o PubkeyAuthentication=no ubuntu@<host>.local
+
+- name: Install operator SSH key on freshly-flashed Pis
+  hosts: all
+  gather_facts: false
+  vars:
+    ansible_password: "{{ ubuntu_password }}"
+    ansible_ssh_common_args: >-
+      -o PreferredAuthentications=password
+      -o PubkeyAuthentication=no
+      -o StrictHostKeyChecking=accept-new
+
+  tasks:
+    - name: Ensure ~/.ssh exists
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/.ssh"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0700"
+
+    - name: Install the operator public key into authorized_keys
+      ansible.builtin.lineinfile:
+        path: "/home/{{ ansible_user }}/.ssh/authorized_keys"
+        line: "{{ lookup('file', operator_pubkey) }}"
+        create: true
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0600"
+
+    - name: Confirm key auth now works
+      ansible.builtin.debug:
+        msg: >-
+          Key installed on {{ inventory_hostname }}. Subsequent playbooks connect
+          over SSH keys (no password / no sshpass needed).

@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+#
+# flash-pi - flash an Ubuntu Server SD card for a Matter test lab Pi, on macOS.
+#
+# Downloads (once, cached + checksum-verified) the Ubuntu arm64 Raspberry Pi
+# image, safely picks the target SD card, writes it, and pre-seeds cloud-init so
+# the Pi boots ready to use: correct hostname, your SSH key installed, key-only
+# SSH, passwordless sudo. After this, the Ansible playbooks connect immediately.
+# no ssh-copy-id / bootstrap step needed.
+#
+# Config is read from group_vars/all.yml (ubuntu_image_url, operator_pubkey,
+# ubuntu_password), so the flasher and the playbooks share one source of truth.
+#
+# Usage:  ./flash-pi <hostname>       e.g.  ./flash-pi MatterTH
+#
+# Safety: only *external physical* disks are offered, and you must retype the
+# chosen disk's size to confirm before anything is erased.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CFG="$SCRIPT_DIR/group_vars/all.yml"
+
+die() { echo "error: $*" >&2; exit 1; }
+
+# --- read a "key: value" (optionally quoted, with trailing # comment) from YAML ---
+get_var() {
+  sed -n "s/^$1:[[:space:]]*//p" "$CFG" | head -1 \
+    | sed 's/[[:space:]]*#.*$//; s/^"//; s/"$//; s/[[:space:]]*$//'
+}
+
+[[ -f "$CFG" ]] || die "config not found: $CFG"
+
+HOSTNAME_SHORT="${1:-}"
+[[ -n "$HOSTNAME_SHORT" ]] || die "usage: $0 <hostname>   (e.g. MatterTH)"
+
+IMAGE_URL="$(get_var ubuntu_image_url)"
+[[ -n "$IMAGE_URL" ]] || die "ubuntu_image_url not set in $CFG"
+
+SSH_PUBKEY_PATH="$(get_var operator_pubkey)"
+SSH_PUBKEY_PATH="${SSH_PUBKEY_PATH/#\~/$HOME}"
+[[ -f "$SSH_PUBKEY_PATH" ]] || die "SSH public key not found: $SSH_PUBKEY_PATH"
+PUBKEY="$(cat "$SSH_PUBKEY_PATH")"
+
+UBUNTU_PASSWORD="$(get_var ubuntu_password)"
+[[ -n "$UBUNTU_PASSWORD" ]] || UBUNTU_PASSWORD="ubuntu"
+
+CACHE_DIR="${MATTER_PI_IMAGE_CACHE:-$HOME/.cache/matter-pi-images}"
+mkdir -p "$CACHE_DIR"
+
+# --- ensure the image is cached and checksum-verified (idempotent) ---
+IMG_NAME="$(basename "$IMAGE_URL")"
+IMG_PATH="$CACHE_DIR/$IMG_NAME"
+SUMS_URL="$(dirname "$IMAGE_URL")/SHA256SUMS"
+
+echo "==> Fetching expected checksum from $SUMS_URL"
+EXPECTED_SHA="$(curl -fsSL "$SUMS_URL" \
+  | awk -v f="$IMG_NAME" '{ n=$2; sub(/^[*]/,"",n); if (n==f) { print $1; exit } }')"
+[[ -n "$EXPECTED_SHA" ]] || die "could not find $IMG_NAME in SHA256SUMS"
+
+verify_img() {
+  [[ -f "$IMG_PATH" ]] || return 1
+  local got
+  got="$(shasum -a 256 "$IMG_PATH" | awk '{print $1}')"
+  [[ "$got" == "$EXPECTED_SHA" ]]
+}
+
+if verify_img; then
+  echo "==> Cached image verified: $IMG_PATH"
+else
+  echo "==> Downloading $IMG_NAME (resumable) ..."
+  curl -fL -C - -o "$IMG_PATH" "$IMAGE_URL"
+  verify_img || die "checksum mismatch after download (expected $EXPECTED_SHA)"
+  echo "==> Download verified."
+fi
+
+# --- enumerate external physical disks (never the internal drive) ---
+echo
+echo "==> External physical disks (SD card readers appear here):"
+n=0
+while IFS= read -r dev; do
+  [[ -n "$dev" ]] || continue
+  n=$((n + 1))
+  di="$(diskutil info "$dev" 2>/dev/null || true)"
+  size="$(printf '%s\n' "$di" | awk -F': *' '/Disk Size/{split($2,a," "); print a[1]" "a[2]; exit}')"
+  name="$(printf '%s\n' "$di" | awk -F': *' '/Device \/ Media Name/{print $2; exit}')"
+  eval "DEV_$n=\$dev; SIZE_$n=\$size; NAME_$n=\$name"
+  printf "  %d) %-12s %-10s %s\n" "$n" "$dev" "$size" "$name"
+done < <(diskutil list external physical | awk '/\(external, physical\):/{print $1}')
+
+[[ "$n" -ge 1 ]] || die "no external physical disks found - insert the SD card and retry"
+
+echo
+printf "Select the disk to ERASE and flash [1-%d] (or q to quit): " "$n"
+read -r sel
+[[ "$sel" == "q" ]] && { echo "aborted."; exit 0; }
+[[ "$sel" =~ ^[0-9]+$ ]] && [[ "$sel" -ge 1 ]] && [[ "$sel" -le "$n" ]] || die "invalid selection"
+
+eval "TARGET=\$DEV_$sel; TSIZE=\$SIZE_$sel; TNAME=\$NAME_$sel"
+
+echo
+echo "  ############################################################"
+echo "  #  About to ERASE:  $TARGET"
+echo "  #  Size:           $TSIZE"
+echo "  #  Name:           $TNAME"
+echo "  #  Write image:    $IMG_NAME"
+echo "  #  For host:       $HOSTNAME_SHORT"
+echo "  #  ALL DATA on $TARGET will be permanently destroyed."
+echo "  ############################################################"
+echo
+printf "Type the disk's size exactly (\"%s\") to confirm: " "$TSIZE"
+read -r confirm
+[[ "$confirm" == "$TSIZE" ]] || die "confirmation did not match; aborting"
+
+RAW="/dev/r$(basename "$TARGET")"   # raw char device: much faster for dd
+
+echo "==> Unmounting $TARGET ..."
+diskutil unmountDisk "$TARGET"
+
+USIZE="$(xz --robot -l "$IMG_PATH" 2>/dev/null | awk '/^totals/{print $5; exit}')"
+[[ "$USIZE" =~ ^[0-9]+$ ]] || USIZE=""
+
+echo "==> Flashing to $RAW (you'll be prompted for your sudo password) ..."
+if [[ -n "$USIZE" ]]; then
+  xz -dc "$IMG_PATH" | pv -s "$USIZE" | sudo dd of="$RAW" bs=4m
+else
+  xz -dc "$IMG_PATH" | pv | sudo dd of="$RAW" bs=4m
+fi
+sync
+
+# --- mount the FAT boot partition and pre-seed cloud-init ---
+echo "==> Mounting boot partition to write cloud-init ..."
+diskutil mountDisk "$TARGET" >/dev/null 2>&1 || true
+diskutil mount "${TARGET}s1" >/dev/null 2>&1 || true
+
+BOOT_MNT=""
+for cand in "/Volumes/system-boot" \
+            "$(diskutil info "${TARGET}s1" 2>/dev/null | awk -F': *' '/Mount Point/{print $2; exit}')"; do
+  [[ -n "$cand" && -d "$cand" ]] && { BOOT_MNT="$cand"; break; }
+done
+[[ -n "$BOOT_MNT" ]] || die "could not find the mounted boot partition (system-boot)"
+
+echo "==> Writing $BOOT_MNT/user-data (hostname=$HOSTNAME_SHORT, key-only SSH)"
+cat > "$BOOT_MNT/user-data" <<EOF
+#cloud-config
+hostname: $HOSTNAME_SHORT
+manage_etc_hosts: true
+users:
+  - name: ubuntu
+    groups: [adm, sudo]
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys:
+      - $PUBKEY
+ssh_pwauth: false
+chpasswd:
+  expire: false
+  users:
+    - name: ubuntu
+      password: $UBUNTU_PASSWORD
+      type: text
+EOF
+
+# cloud-init NoCloud needs a meta-data file present (the image ships one; ensure it).
+[[ -f "$BOOT_MNT/meta-data" ]] || printf 'instance-id: %s\n' "$HOSTNAME_SHORT" > "$BOOT_MNT/meta-data"
+
+sync
+echo "==> Ejecting $TARGET ..."
+diskutil eject "$TARGET"
+
+echo
+echo "Done. Insert the card into the '$HOSTNAME_SHORT' Pi and power on."
+echo "First boot runs cloud-init (a minute or two), then it is reachable as:"
+echo "    ssh ubuntu@$HOSTNAME_SHORT.local"
+echo "and the Ansible playbooks will connect with no onboarding step."

@@ -1,0 +1,57 @@
+---
+# Fail fast if we're not talking to the intended, correctly-flashed Pi. Runs
+# before any expensive work. Requires gather_facts: true on the play.
+# Consumed by both th.yml and dut.yml.
+
+- name: Assert the login user matches configuration
+  ansible.builtin.assert:
+    that: ansible_user == "ubuntu"
+    fail_msg: >-
+      Login user is '{{ ansible_user }}', but the Test Harness requires 'ubuntu'
+      (certification-tool issue #342). Reflash with that username.
+    quiet: true
+
+- name: Assert the OS matches the configured Ubuntu image
+  ansible.builtin.assert:
+    that:
+      - ansible_distribution == "Ubuntu"
+      - ansible_distribution_version == expected_ubuntu_version
+      - ansible_distribution_release == expected_ubuntu_release
+      - ansible_architecture == expected_architecture
+    fail_msg: >-
+      Target is {{ ansible_distribution }} {{ ansible_distribution_version }}
+      ({{ ansible_distribution_release }}, {{ ansible_architecture }}), but config
+      expects Ubuntu {{ expected_ubuntu_version }} ({{ expected_ubuntu_release }},
+      {{ expected_architecture }}). Reflash with {{ expected_ubuntu_image }}.
+    success_msg: >-
+      OS matches: Ubuntu {{ ansible_distribution_version }}
+      ({{ ansible_distribution_release }}, {{ ansible_architecture }}).
+    quiet: true
+
+- name: Assert the hostname matches configuration
+  ansible.builtin.assert:
+    that: ansible_hostname == expected_hostname
+    fail_msg: >-
+      Hostname is '{{ ansible_hostname }}', config expects '{{ expected_hostname }}'.
+      Wrong Pi, or mDNS resolved to a different host?
+    quiet: true
+
+- name: Gather this host's interface MAC addresses
+  ansible.builtin.set_fact:
+    host_macs: >-
+      {{ ansible_interfaces
+         | map('regex_replace', '^(.*)$', 'ansible_\1')
+         | map('extract', hostvars[inventory_hostname])
+         | select('mapping')
+         | selectattr('macaddress', 'defined')
+         | map(attribute='macaddress')
+         | map('lower') | list }}
+
+- name: Assert the configured MAC belongs to this host
+  ansible.builtin.assert:
+    that: (expected_mac | lower) in host_macs
+    fail_msg: >-
+      Configured MAC {{ expected_mac }} not found on {{ inventory_hostname }}.
+      Interfaces present: {{ host_macs }}. Wrong Pi in the inventory?
+    success_msg: "MAC {{ expected_mac }} confirmed on {{ inventory_hostname }}."
+    quiet: true

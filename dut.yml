@@ -1,0 +1,209 @@
+---
+# Build and run the DUT: a stock connectedhomeip example app (Linux/arm64),
+# pinned to the same SDK SHA the Test Harness uses, on a fresh Ubuntu Pi.
+# Parameterized: all config lives in inventory.ini + group_vars/ (see README.md).
+#
+# The generic test-event test cases run against any commissionable Matter device,
+# so a stock example app is a valid DUT.
+#
+# Run:  ansible-playbook dut.yml                 # build (skips compile if built)
+#   Verify the Pi only:  ansible-playbook dut.yml --tags verify
+#   Just (re)launch the DUT app:  ansible-playbook dut.yml --tags run
+#   Build only, don't launch:     ansible-playbook dut.yml --tags build
+#
+# Tags: verify | build (prereqs + clone + compile) | apt | run (launch the app)
+# The build is long the first time (submodules + pigweed bootstrap + compile,
+# 45-90 min on a Pi 5); idempotent, re-runs skip the compile if the binary exists.
+
+- name: Build and run the example-app DUT
+  hosts: dut
+  gather_facts: true
+
+  tasks:
+    # In event mode this repo ships no coordinates, so fail immediately and
+    # explain, rather than discovering the problem after a 45-90 minute build.
+    # In development mode a branch default is used.
+    - name: Require an SDK version
+      ansible.builtin.assert:
+        that: sdk_version_effective | trim | length > 0
+        fail_msg: >-
+          lab_mode is "event" but sdk_sha is not set. A test event pins a
+          specific SDK commit, and the DUT must be built from the same commit
+          the Test Harness is built from (group_vars/th.yml: th_version), so
+          this repo intentionally ships no value and will not guess: take it
+          from your own test event materials. Set it in
+          host_vars/<your-dut-host>.yml or pass -e sdk_sha=<sha>. If you are
+          NOT at a test event, set lab_mode=development instead and a branch
+          will be used automatically.
+        success_msg: >-
+          SDK {{ sdk_version_effective | trim }} (lab_mode={{ lab_mode }})
+        quiet: true
+      tags: [verify, build]
+
+    - name: Verify we're on the intended, correctly-flashed Pi
+      ansible.builtin.import_tasks: tasks/verify_target.yml
+      tags: [verify]
+
+    - name: Prepare apt (stop timers, wait for lock, enable pockets)
+      ansible.builtin.import_tasks: tasks/apt_prepare.yml
+      tags: [build, apt]
+
+    - name: Install connectedhomeip build prerequisites (Linux/arm64)
+      become: true
+      ansible.builtin.apt:
+        update_cache: true
+        lock_timeout: 300
+        state: present
+        name:
+          - git
+          - gcc
+          - g++
+          - pkg-config
+          - libssl-dev
+          - libdbus-1-dev
+          - libglib2.0-dev
+          - libavahi-client-dev
+          - libevent-dev          # event2/event.h, needed by ot-commissioner
+          - ninja-build
+          - python3-venv
+          - python3-dev
+          - python3-pip
+          - unzip
+          - libgirepository1.0-dev
+          - libcairo2-dev
+          - libreadline-dev
+      tags: [build]
+
+    - name: Ensure Avahi (mDNS) is installed so the DUT is discoverable for commissioning
+      become: true
+      ansible.builtin.apt:
+        state: present
+        name:
+          - avahi-daemon
+          - avahi-utils
+      tags: [build, run]
+
+    - name: Ensure avahi-daemon is running and enabled
+      become: true
+      ansible.builtin.systemd:
+        name: avahi-daemon
+        state: started
+        enabled: true
+      tags: [build, run]
+
+    - name: Clone connectedhomeip at the pinned SDK SHA (submodules handled separately)
+      ansible.builtin.git:
+        repo: "{{ sdk_repo }}"
+        dest: "{{ sdk_dest }}"
+        version: "{{ sdk_version_effective | trim }}"
+        recursive: false
+        force: false
+      register: sdk_clone
+      tags: [build]
+
+    - name: Check out only the Linux-platform submodules (shallow; far faster than all)
+      ansible.builtin.command:
+        cmd: "python3 scripts/checkout_submodules.py --shallow --platform linux"
+        chdir: "{{ sdk_dest }}"
+      register: submodule_checkout
+      changed_when: "'Checking out' in submodule_checkout.stdout or sdk_clone.changed"
+      tags: [build]
+
+    - name: Bootstrap the pigweed environment and build the example app (long-running)
+      ansible.builtin.shell:
+        cmd: >-
+          if [ -f scripts/activate.sh ] && [ -d .environment ]; then
+            source scripts/activate.sh;
+          else
+            source scripts/bootstrap.sh;
+          fi &&
+          ./scripts/examples/gn_build_example.sh {{ dut_example_path }} {{ dut_out_dir }}
+        chdir: "{{ sdk_dest }}"
+        executable: /bin/bash
+        creates: "{{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}"
+      register: build_result
+      async: 7200
+      poll: 30
+      tags: [build]
+
+    - name: Confirm the DUT binary exists
+      ansible.builtin.stat:
+        path: "{{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}"
+      register: dut_bin
+      tags: [build]
+
+    - name: Report DUT build result
+      ansible.builtin.debug:
+        msg: >-
+          {{ dut_app_binary }} built at {{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}
+          (exists={{ dut_bin.stat.exists }}).
+      tags: [build]
+
+    # --- Launch the DUT app as a transient systemd unit, fresh (unprovisioned) so
+    # it advertises as commissionable. Discriminator/setup-code come from group_vars.
+    - name: Stop any previous DUT app instance
+      become: true
+      ansible.builtin.systemd:
+        name: matter-dut
+        state: stopped
+      failed_when: false
+      tags: [run]
+
+    - name: Reset unit state and clear commissioning KVS (fresh commissionable state)
+      become: true
+      ansible.builtin.shell: |
+        systemctl reset-failed matter-dut 2>/dev/null || true
+        rm -f /tmp/chip_* 2>/dev/null || true
+      changed_when: false
+      tags: [run]
+
+    - name: Launch the DUT example app (transient unit 'matter-dut')
+      become: true
+      ansible.builtin.command:
+        cmd: >-
+          systemd-run --unit=matter-dut --working-directory=/tmp
+          {{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}
+          --discriminator {{ dut_discriminator }} --passcode {{ dut_setup_code }}
+      # Starting a transient unit is always a change.
+      changed_when: true
+      tags: [run]
+
+    - name: Wait for the DUT to advertise as commissionable
+      become: true
+      # Note "set -uo pipefail" WITHOUT -e. The loop depends on grep returning
+      # non-zero while it waits, so -e would abort on the first poll.
+      ansible.builtin.shell: |
+        set -uo pipefail
+        for _ in $(seq 1 20); do
+          journalctl -u matter-dut --no-pager 2>/dev/null \
+            | grep -q "CHIP minimal mDNS started advertising" && exit 0
+          sleep 1
+        done
+        echo "DUT did not start advertising within 20s" >&2
+        journalctl -u matter-dut --no-pager 2>/dev/null | tail -20 >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      changed_when: false
+      tags: [run]
+
+    - name: Report DUT commissionable advertisement
+      become: true
+      ansible.builtin.shell:
+        # "|| true" keeps "not advertising yet" an empty result rather than a
+        # task failure; the reporting task below defaults the empty case.
+        cmd: |
+          set -euo pipefail
+          journalctl -u matter-dut --no-pager 2>/dev/null \
+            | grep -oE 'Advertise commission parameter.*' | tail -1 || true
+        executable: /bin/bash
+      register: dut_adv
+      changed_when: false
+      tags: [run]
+
+    - name: Show DUT status
+      ansible.builtin.debug:
+        msg: >-
+          DUT '{{ dut_app_binary }}' running (unit matter-dut),
+          commissionable: {{ dut_adv.stdout | default('(not detected)') }}
+      tags: [run]

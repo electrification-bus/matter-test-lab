@@ -1,0 +1,26 @@
+# Your hardware inventory (hostnames + MAC addresses) stays local.
+# Template: examples/inventory.ini
+/inventory.ini
+
+# Per-host overrides stay local. The whole directory is ignored rather than a
+# pattern plus a negation, so there is no way to commit a personal file by
+# accident. Templates live in examples/host_vars/.
+/host_vars/
+
+# Fetched test logs are artifacts, never source. The downloaded OS image is
+# cached outside the repo (~/.cache/matter-pi-images, or $MATTER_PI_IMAGE_CACHE).
+/results/
+
+# Personal AI-agent context stays local; CLAUDE.md (shared project facts) is
+# tracked. Put your own preferences in CLAUDE.local.md instead of editing it.
+CLAUDE.local.md
+AGENTS.local.md
+
+# Some developers globally gitignore CLAUDE.md / AGENTS.md (a common convention
+# for keeping AI context out of published repos). Here they are intentionally
+# shared, so override any such global rule.
+!CLAUDE.md
+!AGENTS.md
+
+*.retry
+.DS_Store
