@@ -3,12 +3,18 @@
 # on a fresh Ubuntu Pi. Parameterized: all config lives in inventory.ini +
 # group_vars/ (see README.md). No -K needed (cloud-init grants passwordless sudo).
 #
+# A Pi that already has a checkout is UPDATED to the configured version rather
+# than reinstalled; a Pi without one is installed from scratch. The playbook
+# decides by looking for the checkout, so the same command is correct either way.
+#
 # Run:  ansible-playbook th.yml
 #   Verify the Pi only:      ansible-playbook th.yml --tags verify
+#   Update an existing TH:   ansible-playbook th.yml --tags update
 #   Just the CLI + backend:  ansible-playbook th.yml --tags thcli,backend
 #   Skip the long install:   ansible-playbook th.yml --skip-tags install
 #
-# Tags: verify | install (git clone + auto-install + reboot) | apt | ports |
+# Tags: verify | install (git clone + auto-install + reboot, fresh Pi only) |
+#       update (auto-update + start, existing checkout only) | apt | ports |
 #       thcli (install th-cli) | backend (self-heal the backend container)
 
 - name: Install and configure the Matter Test Harness
@@ -34,7 +40,7 @@
         success_msg: >-
           Test Harness {{ th_version_effective | trim }} (lab_mode={{ lab_mode }})
         quiet: true
-      tags: [verify, install]
+      tags: [verify, install, update]
 
     - name: Verify we're on the intended, correctly-flashed Pi
       ansible.builtin.import_tasks: tasks/verify_target.yml
@@ -42,7 +48,7 @@
 
     - name: Prepare apt (stop timers, wait for lock, enable pockets)
       ansible.builtin.import_tasks: tasks/apt_prepare.yml
-      tags: [install, apt]
+      tags: [install, update, apt]
 
     - name: Ensure git is installed
       become: true
@@ -51,15 +57,37 @@
         state: present
         update_cache: true
         lock_timeout: 300
-      tags: [install]
+      tags: [install, update]
 
-    - name: Clone certification-tool at the pinned tag (with submodules)
+    # --- Install or update. Reinstalling over a working Test Harness is not
+    # harmless: auto-install.sh redoes the Docker install and the machine
+    # configuration and expects a reboot. Upstream's path for moving an existing
+    # install to another version is auto-update.sh, so an existing checkout takes
+    # that path and only a bare Pi is installed from scratch.
+    - name: Look for an existing Test Harness checkout
+      ansible.builtin.stat:
+        path: "{{ th_dest }}/.git"
+      register: th_checkout
+      tags: [install, update]
+
+    - name: Report whether this run installs or updates
+      ansible.builtin.debug:
+        msg: >-
+          {{ th_dest }}
+          {{ 'already exists: updating it to'
+             if th_checkout.stat.exists
+             else 'is absent: installing' }}
+          {{ th_version_effective | trim }}
+      tags: [install, update]
+
+    - name: Clone certification-tool at the pinned version (with submodules)
       ansible.builtin.git:
         repo: "{{ th_repo }}"
         dest: "{{ th_dest }}"
         version: "{{ th_version_effective | trim }}"
         recursive: true
         force: false
+      when: not th_checkout.stat.exists
       tags: [install]
 
     - name: Run the TH auto-install script (long-running, 20-40+ min)
@@ -69,6 +97,7 @@
       register: install_result
       async: 3600
       poll: 20
+      when: not th_checkout.stat.exists
       # It installs Docker, builds containers and writes config: always a change.
       changed_when: true
       # The script only prompts to reboot at the very end (we feed EOF), so it
@@ -94,7 +123,55 @@
         connect_timeout: 30
         post_reboot_delay: 45
         msg: "Finalizing Matter Test Harness install"
+      when: not th_checkout.stat.exists
       tags: [install]
+
+    # --- Update path, for a Pi that already has a checkout. auto-update.sh does
+    # its own stash before it fetches, which matters because an installed Test
+    # Harness leaves modified files in the working tree that would otherwise make
+    # the checkout fail. It leaves the containers stopped, so start.sh follows.
+    - name: Update the Test Harness to the pinned version (long-running)
+      ansible.builtin.shell:
+        cmd: "{{ th_update_script }} {{ th_version_effective | trim }} </dev/null"
+        chdir: "{{ th_dest }}"
+      register: update_result
+      async: 3600
+      poll: 20
+      when: th_checkout.stat.exists
+      # It checks out code and rebuilds containers: always a change.
+      changed_when: true
+      # Same banner convention as the install script: a non-zero rc or an
+      # "Exit with Error" line in the output is a real failure.
+      failed_when: >-
+        update_result.rc != 0 or
+        ('Exit with Error' in (update_result.stdout | default('')))
+      tags: [install, update]
+
+    - name: Show update stderr on failure
+      ansible.builtin.debug:
+        var: update_result.stderr_lines
+      when:
+        - update_result.stderr_lines is defined
+        - update_result.stderr_lines | length > 0
+      tags: [install, update]
+
+    - name: Start the Test Harness containers after the update
+      ansible.builtin.shell:
+        cmd: "{{ th_start_script }} </dev/null"
+        chdir: "{{ th_dest }}"
+      register: start_result
+      when: th_checkout.stat.exists
+      # Brings the container stack up: always a change.
+      changed_when: true
+      tags: [install, update]
+
+    - name: Report the Test Harness version now checked out
+      ansible.builtin.command:
+        cmd: git rev-parse --abbrev-ref HEAD
+        chdir: "{{ th_dest }}"
+      register: th_current_ref
+      changed_when: false
+      tags: [install, update, verify]
 
     - name: Check which web ports the TH is listening on (informational)
       become: true
@@ -107,15 +184,16 @@
         executable: /bin/bash
       register: th_ports
       changed_when: false
-      tags: [install, ports]
+      tags: [install, update, ports]
 
-    - name: Report TH listening ports
+    - name: Report TH version and listening ports
       ansible.builtin.debug:
         msg: >-
-          TH is back up. Web ports listening:
+          Test Harness on {{ th_current_ref.stdout | default('(unknown)') }}.
+          Web ports listening:
           {{ th_ports.stdout_lines
              | default(['(none yet; give it a minute, then open http://' + expected_hostname + '.local)']) }}
-      tags: [install, ports]
+      tags: [install, update, ports]
 
     # --- TH CLI: the scriptable interface (the Survival Guide's preferred mode).
     # th_cli_install.sh needs pipx + Poetry, which the Pi image lacks.

@@ -37,6 +37,15 @@ th_version_effective: >-
 
 th_dest: "/home/{{ ansible_user }}/certification-tool"
 th_install_script: "./scripts/pi-setup/auto-install.sh"
+# Moving an ALREADY-INSTALLED Test Harness to another version uses a different
+# script. auto-install.sh redoes Docker and the machine configuration and wants a
+# reboot; auto-update.sh is the supported path for an existing install. It takes
+# the version as its one argument, stashes local changes, fetches, checks out,
+# pulls, updates the submodules, stops the containers and rebuilds them. It does
+# not start them again, so start.sh follows. th.yml picks the right one by
+# looking for an existing checkout.
+th_update_script: "./scripts/ubuntu/auto-update.sh"
+th_start_script: "./scripts/start.sh"
 
 # Web ports the TH may listen on after install. Informational readiness check
 # only; nothing is configured from this.
