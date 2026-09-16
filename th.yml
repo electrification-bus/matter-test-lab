@@ -59,6 +59,29 @@
         lock_timeout: 300
       tags: [install, update]
 
+    # Poetry is a prerequisite of BOTH the update path and th-cli: the update
+    # runs update-setup-cli-dependencies.sh, which installs the Matter CLI with
+    # Poetry and aborts the whole update with "Poetry could not be found" if it
+    # is missing. Installed here, ahead of the decision below, so it is present
+    # whichever path runs.
+    - name: Install pipx (for Poetry and the TH CLI)
+      become: true
+      ansible.builtin.apt:
+        name: pipx
+        state: present
+        update_cache: true
+        lock_timeout: 300
+      tags: [install, update, thcli]
+
+    - name: Install Poetry via pipx
+      ansible.builtin.shell: |
+        export PATH="$HOME/.local/bin:$PATH"
+        command -v poetry >/dev/null 2>&1 || pipx install poetry
+      args:
+        executable: /bin/bash
+        creates: "{{ ansible_env.HOME }}/.local/share/pipx/venvs/poetry"
+      tags: [install, update, thcli]
+
     # --- Install or update. Reinstalling over a working Test Harness is not
     # harmless: auto-install.sh redoes the Docker install and the machine
     # configuration and expects a reboot. Upstream's path for moving an existing
@@ -130,10 +153,18 @@
     # its own stash before it fetches, which matters because an installed Test
     # Harness leaves modified files in the working tree that would otherwise make
     # the checkout fail. It leaves the containers stopped, so start.sh follows.
+    # The PATH export is load-bearing. pipx puts Poetry in ~/.local/bin, which a
+    # non-interactive SSH shell does not have on PATH, and the update's CLI step
+    # exits with "Poetry could not be found" without it. That leaves the Test
+    # Harness on the new code with its containers stopped, which looks like a
+    # broken install rather than a missing PATH entry.
     - name: Update the Test Harness to the pinned version (long-running)
       ansible.builtin.shell:
-        cmd: "{{ th_update_script }} {{ th_version_effective | trim }} </dev/null"
+        cmd: |
+          export PATH="$HOME/.local/bin:$PATH"
+          {{ th_update_script }} {{ th_version_effective | trim }} </dev/null
         chdir: "{{ th_dest }}"
+        executable: /bin/bash
       register: update_result
       async: 3600
       poll: 20
@@ -157,8 +188,11 @@
 
     - name: Start the Test Harness containers after the update
       ansible.builtin.shell:
-        cmd: "{{ th_start_script }} </dev/null"
+        cmd: |
+          export PATH="$HOME/.local/bin:$PATH"
+          {{ th_start_script }} </dev/null
         chdir: "{{ th_dest }}"
+        executable: /bin/bash
       register: start_result
       when: th_checkout.stat.exists
       # Brings the container stack up: always a change.
@@ -197,24 +231,6 @@
 
     # --- TH CLI: the scriptable interface (the Survival Guide's preferred mode).
     # th_cli_install.sh needs pipx + Poetry, which the Pi image lacks.
-    - name: Install pipx (for the TH CLI)
-      become: true
-      ansible.builtin.apt:
-        name: pipx
-        state: present
-        update_cache: true
-        lock_timeout: 300
-      tags: [thcli]
-
-    - name: Install Poetry via pipx (required by th_cli_install.sh)
-      ansible.builtin.shell: |
-        export PATH="$HOME/.local/bin:$PATH"
-        command -v poetry >/dev/null 2>&1 || pipx install poetry
-      args:
-        executable: /bin/bash
-        creates: "{{ ansible_env.HOME }}/.local/share/pipx/venvs/poetry"
-      tags: [thcli]
-
     - name: Install th-cli
       ansible.builtin.shell: |
         export PATH="$HOME/.local/bin:$PATH"

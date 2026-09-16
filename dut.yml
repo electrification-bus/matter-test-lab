@@ -109,13 +109,30 @@
       changed_when: "'Checking out' in submodule_checkout.stdout or sdk_clone.changed"
       tags: [build]
 
+    # activate.sh reuses the existing .environment, which belongs to the SDK
+    # revision it was bootstrapped from: it carries that revision's pigweed and
+    # its zap-cli. Reusing it after the checkout has moved fails the build at code
+    # generation with a version check ("required at least <date>, got <older>"),
+    # which reads like a broken SDK rather than a stale environment.
+    #
+    # Whether the environment matches cannot be inferred from whether the clone
+    # changed on THIS run: a re-run after a moved checkout sees an unchanged clone
+    # and a still-stale environment. So the revision it was bootstrapped from is
+    # stamped in the environment itself and compared against the checkout. No
+    # stamp means an environment from before this was tracked: treat as stale.
+    # Bootstrapping is much slower than activating, so it only happens when the
+    # two actually differ.
     - name: Bootstrap the pigweed environment and build the example app (long-running)
       ansible.builtin.shell:
         cmd: >-
-          if [ -f scripts/activate.sh ] && [ -d .environment ]; then
+          if [ -d .environment ] &&
+             [ -f .environment/.bootstrapped-sdk-revision ] &&
+             [ "$(cat .environment/.bootstrapped-sdk-revision)" = "$(git rev-parse HEAD)" ];
+          then
             source scripts/activate.sh;
           else
-            source scripts/bootstrap.sh;
+            source scripts/bootstrap.sh &&
+            git rev-parse HEAD > .environment/.bootstrapped-sdk-revision;
           fi &&
           ./scripts/examples/gn_build_example.sh {{ dut_example_path }} {{ dut_out_dir }}
         chdir: "{{ sdk_dest }}"
