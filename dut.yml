@@ -189,15 +189,40 @@
       become: true
       # Note "set -uo pipefail" WITHOUT -e. The loop depends on grep returning
       # non-zero while it waits, so -e would abort on the first poll.
+      #
+      # Every read is scoped to THIS invocation of the unit, for two reasons.
+      # Correctness: "journalctl -u matter-dut" also returns banners from earlier
+      # launches, so a DUT that failed to come up now can be reported as
+      # advertising on the strength of a previous run's line. Cost: it reads
+      # every entry the unit has ever logged, and this app is chatty, so on a lab
+      # that has been up for weeks one read takes minutes and this loop would do
+      # twenty of them.
+      #
+      # The readiness strings are the ones the SDK actually logs when
+      # commissionable advertising starts: "Advertise commission parameter" from
+      # src/app/server/Dnssd.cpp, and the service-published line beside it. Do not
+      # go back to "CHIP minimal mDNS started advertising": that text survives only
+      # in old certification YAML fixtures, no current source emits it, and using
+      # it makes a DUT that is advertising perfectly well time out here.
+      #
+      # The journal is read into a variable and matched with "case" rather than
+      # piped into grep. Under "pipefail", "journalctl | grep -q" reports the
+      # PIPELINE as failed on success: grep -q exits the moment it matches,
+      # journalctl takes SIGPIPE, and its 141 becomes the pipeline's status. The
+      # probe then never fires and a healthy DUT times out here.
       ansible.builtin.shell: |
         set -uo pipefail
+        INV=$(systemctl show matter-dut -p InvocationID --value)
         for _ in $(seq 1 20); do
-          journalctl -u matter-dut --no-pager 2>/dev/null \
-            | grep -q "CHIP minimal mDNS started advertising" && exit 0
+          LOG=$(journalctl _SYSTEMD_INVOCATION_ID="$INV" --no-pager 2>/dev/null || true)
+          case "$LOG" in
+            *"Advertise commission parameter"*) exit 0 ;;
+            *"mDNS service published: _matterc._udp"*) exit 0 ;;
+          esac
           sleep 1
         done
         echo "DUT did not start advertising within 20s" >&2
-        journalctl -u matter-dut --no-pager 2>/dev/null | tail -20 >&2
+        journalctl _SYSTEMD_INVOCATION_ID="$INV" --no-pager 2>/dev/null | tail -20 >&2
         exit 1
       args:
         executable: /bin/bash
@@ -211,7 +236,8 @@
         # task failure; the reporting task below defaults the empty case.
         cmd: |
           set -euo pipefail
-          journalctl -u matter-dut --no-pager 2>/dev/null \
+          INV=$(systemctl show matter-dut -p InvocationID --value)
+          journalctl _SYSTEMD_INVOCATION_ID="$INV" --no-pager 2>/dev/null \
             | grep -oE 'Advertise commission parameter.*' | tail -1 || true
         executable: /bin/bash
       register: dut_adv
