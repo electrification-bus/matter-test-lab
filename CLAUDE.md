@@ -93,6 +93,14 @@ Encoded in the code and worth preserving:
 - **The Pi Ubuntu image has two apt quirks**, both handled in `tasks/apt_prepare.yml`. See `docs/pi-image-quirks.md` rather than rediscovering them.
 - **`verify_target.yml` asserts hostname, MAC, OS and architecture** before any expensive work, so a wrong or stale flash fails in seconds. Do not weaken it for convenience.
 
+The next five all came out of one job, moving a working lab from one test event's coordinates to the next one's. Every one of them presented as something other than its cause, so none is obvious from the symptom:
+
+- **Updating a lab is not reinstalling it.** `auto-install.sh` redoes the Docker install and the machine configuration and expects a reboot; `auto-update.sh` moves an installed Test Harness to another version in place. `th.yml` picks between them by looking for an existing checkout, and `--tags update` runs the update path alone. Do not collapse the two, and do not run the install path over a working lab.
+- **A script run over SSH does not see `~/.local/bin`.** pipx installs Poetry there and the Test Harness update needs it, so a non-interactive shell fails with "Poetry could not be found". It fails after the containers have been stopped, which leaves the harness down on the new code and reads as a broken install rather than a missing path entry. Tasks that shell out to an upstream script export the path first.
+- **The pigweed environment belongs to the SDK commit it was bootstrapped from**, and carries that commit's `zap-cli`. Reusing it after the checkout has moved fails the build at code generation with a version check that reads like a broken SDK. Staleness cannot be inferred from whether the clone changed on this run, because a re-run after a moved checkout sees an unchanged clone and a still-stale environment, so the commit is stamped into the environment and compared against the checkout.
+- **Under `pipefail`, `producer | grep -q` reports failure exactly when it succeeds.** `grep -q` exits on the first match, the producer takes SIGPIPE, and its 141 becomes the pipeline's status. Read into a variable and match with `case` instead. This is not hypothetical: it silently broke the DUT readiness probe on every run.
+- **Log strings in `src/app/tests/suites/certification/*.yaml` are fixtures, not contracts,** and `journalctl -u <unit>` is not scoped to the current launch. The readiness probe matched "CHIP minimal mDNS started advertising", which survives only in those old fixtures, while the line current source logs is "Advertise commission parameter" from `src/app/server/Dnssd.cpp`. Unscoped reads are also wrong as well as slow: a previous launch's banner can be read as this one's, so a DUT that failed to come up reports as ready. Scope to the unit's `InvocationID`, and check what current source emits before probing for it.
+
 ## Layout
 
 | Path | Role |
@@ -106,6 +114,7 @@ Encoded in the code and worth preserving:
 | `examples/` | Templates for the gitignored `inventory.ini` and `host_vars/`. |
 | `tasks/` | Shared task files imported by the playbooks. |
 | `docs/` | Long-form explanations kept out of the README. |
+| `CHANGELOG.md` | What has changed, newest first. Update it with any change worth a reader's attention. |
 
 ## Related
 
