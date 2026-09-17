@@ -32,6 +32,8 @@ th_version: "..."   # from your test event materials
 sdk_sha: "..."      # from the same event
 ```
 
+Both coordinates are whatever your event's materials say. `th_version` is passed to git as-is, so a branch is as valid as a tag, and in-progress events have so far pinned branches: upstream's own update script documents its argument as a branch name. Do not assume a published tag exists for the version you were given.
+
 | | Development | Event |
 |---|---|---|
 | CSA membership | not needed | required |
@@ -117,6 +119,12 @@ ansible-playbook th.yml     # Test Harness: 20-40+ min, reboots near the end
 ansible-playbook dut.yml    # DUT: 45-90 min first time, idempotent afterwards
 ```
 
+The same two commands move an existing lab to a new version, which is what a second test event asks for. `th.yml` looks for a checkout and updates it in place rather than reinstalling over a working Test Harness, and `dut.yml` re-bootstraps the build environment when the SDK commit has moved. Neither needs a reflash.
+
+```bash
+ansible-playbook th.yml --tags update   # the Test Harness update path on its own
+```
+
 Launch the DUT app, then run a test against it and collect the logs:
 
 ```bash
@@ -130,7 +138,7 @@ Logs land in `./results/` (gitignored). How you submit them is defined by your t
 
 | Playbook | What it does | Tags |
 |---|---|---|
-| `th.yml` | Clones `certification-tool` at your pinned tag, runs its auto-install, reboots, installs `th-cli`, and self-heals the backend container. | `verify`, `install`, `apt`, `ports`, `thcli`, `backend` |
+| `th.yml` | Installs `certification-tool` at your pinned version on a bare Pi, or updates an existing checkout in place; installs `th-cli` and self-heals the backend container. | `verify`, `install`, `update`, `apt`, `ports`, `thcli`, `backend` |
 | `dut.yml` | Clones the SDK at your pinned commit, checks out Linux submodules, bootstraps pigweed, builds an example app, and launches it as a commissionable device. | `verify`, `build`, `apt`, `run` |
 | `th-run.yml` | Drives `th-cli` over SSH to run a test or list of tests headlessly, then fetches the grouped archive, run log and trace logs. | `run`, `collect` |
 | `bootstrap-keys.yml` | Installs your SSH key on a Pi flashed some other way. Not needed after `flash-pi`. | |
@@ -156,6 +164,8 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 - **`ansible-playbook` cannot find the inventory, or "Could not match supplied host pattern".** Either you have not copied `examples/inventory.ini` to `inventory.ini`, or you have `ANSIBLE_CONFIG` exported for another project, which wins over this repo's `ansible.cfg`. Run `source setup-env.sh`.
 - **apt fails on a freshly flashed Pi, or `-dev` packages conflict.** Both are known quirks of the Pi Ubuntu image and are worked around automatically. See [docs/pi-image-quirks.md](docs/pi-image-quirks.md).
 - **Commissioning aborts with a SIGABRT that looks like a crash.** Check `dut_discriminator` is 4095 or less. It is a 12-bit field, and an out-of-range value makes both the app and the controller abort in a way that reads like a device fault.
+- **A Test Harness update stops with "Poetry could not be found".** Fixed; update if you are seeing it. pipx installs Poetry into `~/.local/bin`, which a non-interactive SSH session does not have on its `PATH`, and the update's CLI step needs it. It failed after the containers had been stopped, so the symptom was a Test Harness left down on the new code, which looks like a broken install rather than a missing path entry.
+- **A DUT build fails code generation with "Version validation failed: required at least ...".** Fixed; update if you are seeing it. The pigweed environment belongs to the SDK commit it was bootstrapped from and carries that commit's `zap-cli`, so it goes stale when the checkout moves. The playbook now stamps the environment with its commit and re-bootstraps on a mismatch.
 - **The Test Harness backend exits during install.** Known and self-healed by `--tags backend`. The backend clones the SDK during prestart; if DNS is flaky during the heavy install that clone fails and the container exits. DNS recovers, so a restart re-clones and it comes up.
 
 ## Reference
@@ -172,6 +182,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 | `bootstrap-keys.yml` | Install your SSH key on a Pi flashed another way. |
 | `ansible.cfg` / `setup-env.sh` | Connection defaults; source `setup-env.sh` first. |
 | `docs/pi-image-quirks.md` | The two Pi Ubuntu image quirks and why they are handled. |
+| `CHANGELOG.md` | What has changed, newest first. |
 | `CLAUDE.md` | Shared project context for AI coding agents. |
 
 ## Status and contributing
