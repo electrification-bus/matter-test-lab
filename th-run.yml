@@ -7,6 +7,9 @@
 # Run:  ansible-playbook th-run.yml                      # TC-ACL-2.1 (default)
 #       ansible-playbook th-run.yml -e th_tests=TC-DD-3.20
 #       ansible-playbook th-run.yml -e th_pics_folder=/home/ubuntu/pics
+#   Pass arguments through to the test case (endpoint, int/bool args):
+#       ansible-playbook th-run.yml -e th_tests=TC-FOO-1.1 \
+#           -e '{"th_test_parameters": {"endpoint": "1"}}'
 #   Re-fetch logs for an existing run only:
 #       ansible-playbook th-run.yml --tags collect -e test_run_id=2
 #
@@ -22,11 +25,30 @@
   vars:
     th_tests: "TC-ACL-2.1"                                  # comma-separated list ok
     th_pics_folder: ""                                      # optional PICS folder ON THE TH; you supply it
+    th_test_parameters: {}                                  # per-run test parameters; see below
     th_prompt_answer: "1"                                   # option fed to manual prompts (1=DONE, 2=FAILED)
     th_run_config: "/home/{{ ansible_user }}/run-config.json"
     test_run_id: ""                                           # set via -e for --tags collect
 
   tasks:
+    # th_test_parameters becomes the run config's "test_parameters" object. The
+    # Test Harness turns each key into a --<key> <value> argument on the test's
+    # command line, so this is how a Python test case receives the arguments its
+    # own CI block declares.
+    #
+    # The one almost every cluster test needs is the endpoint. A Python test
+    # guarded by @run_if_endpoint_matches aborts outright with "The --endpoint
+    # flag is required for this test."; an unguarded one silently falls back to
+    # endpoint 0 and fails there, which reads as a broken device. So:
+    #
+    #   ansible-playbook th-run.yml -e th_tests=TC-FOO-1.1 \
+    #       -e '{"th_test_parameters": {"endpoint": "1"}}'
+    #
+    # A run config carries one set of parameters, so group the test cases you
+    # pass in th_tests by the endpoint they run on and make one invocation per
+    # group. Take the endpoint from your own device, not from a script's CI
+    # block: those describe the app upstream CI runs the test against, which is
+    # usually not yours.
     - name: Write the TH run config (dut_config from group_vars)
       ansible.builtin.copy:
         dest: "{{ th_run_config }}"
@@ -56,7 +78,9 @@
               "chip_use_paa_certs": false,
               "trace_log": true
             },
-            "test_parameters": null
+            "test_parameters": {{ (th_test_parameters | to_json)
+                                  if (th_test_parameters | default({}) | length > 0)
+                                  else 'null' }}
           }
       tags: [run]
 

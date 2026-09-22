@@ -132,6 +132,15 @@ ansible-playbook dut.yml --tags run
 ansible-playbook th-run.yml -e th_tests=TC-ACL-2.1
 ```
 
+Most cluster tests need arguments that `TC-ACL-2.1` does not. Pass them with `th_test_parameters`, which becomes the run config's `test_parameters`; the Test Harness turns each key into a `--<key> <value>` argument on the test's command line:
+
+```bash
+ansible-playbook th-run.yml -e th_tests=TC-FOO-1.1 \
+    -e '{"th_test_parameters": {"endpoint": "1"}}'
+```
+
+The endpoint is the one almost every cluster test needs, and omitting it fails in two different ways depending on the test. A run config carries one set of parameters, so group the tests you pass in `th_tests` by the endpoint they run on and make one invocation per group. Take the endpoint from your own device rather than from a script's CI header: those describe the app upstream CI runs the test against, which is usually not yours.
+
 Logs land in `./results/` (gitignored). How you submit them is defined by your test event; this repo does not encode any submission process.
 
 ## The playbooks
@@ -157,6 +166,12 @@ dut_setup_code: "20202021"
 
 Then run tests against it with `th-run.yml`, which only talks to the Test Harness and does not care what the DUT is.
 
+If you do use `dut.yml`, `dut_app_extra_args` appends arguments to the app's command line. The usual need is `--enable-key`, without which any test that drives a TestEventTrigger stops at its first check:
+
+```yaml
+dut_app_extra_args: "--enable-key 000102030405060708090a0b0c0d0e0f"
+```
+
 The reference DUT that `dut.yml` builds is still worth having. It is a known-good device, which makes it the fastest way to answer "is this failure my device, or my lab?", and it lets you practise the whole loop before your own hardware is ready. Point `dut_example_path` at a different example app, or at your own app in an SDK fork, whenever that is more useful.
 
 ## Troubleshooting
@@ -166,6 +181,9 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 - **Commissioning aborts with a SIGABRT that looks like a crash.** Check `dut_discriminator` is 4095 or less. It is a 12-bit field, and an out-of-range value makes both the app and the controller abort in a way that reads like a device fault.
 - **A Test Harness update stops with "Poetry could not be found".** Fixed; update if you are seeing it. pipx installs Poetry into `~/.local/bin`, which a non-interactive SSH session does not have on its `PATH`, and the update's CLI step needs it. It failed after the containers had been stopped, so the symptom was a Test Harness left down on the new code, which looks like a broken install rather than a missing path entry.
 - **A DUT build fails code generation with "Version validation failed: required at least ...".** Fixed; update if you are seeing it. The pigweed environment belongs to the SDK commit it was bootstrapped from and carries that commit's `zap-cli`, so it goes stale when the checkout moves. The playbook now stamps the environment with its commit and re-bootstraps on a mismatch.
+- **A test aborts with "The --endpoint flag is required for this test."** Pass `th_test_parameters`, for example `-e '{"th_test_parameters": {"endpoint": "1"}}'`. A test guarded by `@run_if_endpoint_matches` fails this way; one without that guard instead falls back to its own `default_endpoint`, usually 0, and fails against the root node as though the device were broken. A run with a missing endpoint can therefore look partly healthy.
+- **A test is skipped rather than run, and files as no result.** `@run_if_endpoint_matches` skips when the configured endpoint does not offer the feature the test gates on. Check the endpoint against your device, not against the script's CI header.
+- **Tests that drive a TestEventTrigger report a pass without testing anything.** Set `dut_app_extra_args` to pass `--enable-key`. The example apps zero-initialize the key, so `GeneralDiagnostics.TestEventTriggersEnabled` reads false, and a test that checks it then commonly marks its remaining steps skipped and returns, which the framework records as a pass. Some tests assert instead and fail loudly; do not assume a green run means the key was set.
 - **The Test Harness backend exits during install.** Known and self-healed by `--tags backend`. The backend clones the SDK during prestart; if DNS is flaky during the heavy install that clone fails and the container exits. DNS recovers, so a restart re-clones and it comes up.
 
 ## Reference

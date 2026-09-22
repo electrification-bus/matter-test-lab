@@ -43,6 +43,25 @@ dut_example_path: "examples/all-clusters-app/linux"
 dut_out_dir: "out/debug"
 dut_app_binary: "chip-all-clusters-app"
 
+# Extra arguments appended to the app's command line by the 'run' tag, after
+# --discriminator and --passcode. Empty by default; set it in
+# host_vars/<your-dut-host>.yml.
+#
+# The case that most often needs this is --enable-key. A test case that drives a
+# TestEventTrigger first reads GeneralDiagnostics.TestEventTriggersEnabled and
+# stops if it is false, and the Linux example apps compute that attribute by
+# comparing the configured key against an all-zero span (the key in
+# examples/platform/linux/Options.h is zero-initialized). An app launched
+# without --enable-key therefore reports false, and every such test case fails
+# at its first step in a way that reads as a device fault rather than a missing
+# launch argument. The Python test framework's default key is bytes(range(16)):
+#
+#   dut_app_extra_args: "--enable-key 000102030405060708090a0b0c0d0e0f"
+#
+# This ships empty because the key is a property of your device and your test
+# content, not of this lab.
+dut_app_extra_args: ""
+
 # Commissioning parameters (dut_pairing_mode / dut_discriminator /
 # dut_setup_code) live in group_vars/all.yml, because both this playbook's
 # 'run' tag and th-run.yml need them and they must not drift. If you are

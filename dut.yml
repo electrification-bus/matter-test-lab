@@ -181,6 +181,7 @@
           systemd-run --unit=matter-dut --working-directory=/tmp
           {{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}
           --discriminator {{ dut_discriminator }} --passcode {{ dut_setup_code }}
+          {{ dut_app_extra_args }}
       # Starting a transient unit is always a change.
       changed_when: true
       tags: [run]
