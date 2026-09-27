@@ -29,15 +29,15 @@ python3 PICSGenerator.py \
 
 It commissions the device, walks every endpoint, and writes `GeneratedPICS/endpointN/` plus `Base.xml`. To re-run against a device it has **already** commissioned, drop the commissioning flags and reuse the same `--storage-path`; re-running with them fails discovery, because the device is no longer advertising.
 
-### Feature bits above 9 were dropped
+### Feature bits above 9, and two conventions in the wild
 
-Until [connectedhomeip#74427](https://github.com/project-chip/connectedhomeip/pull/74427) lands, `PICSGenerator.py` formats the feature bit index as hex:
+The PICS Guidelines spell a feature bit in **hex**: *"Feature bit position `<hh>` (in range [0x00..0x1f])"*, with `DRLK.S.F0b` for bit 11 as the example. `PICSGenerator.py` formats the bit with `:02x` to match, and for Door Lock, Thermostat and Camera AV Stream Management that is right.
 
-```python
-featurePicsList.append(f"{clusterPICS}{featureTag}{bitLocation:02x}")
-```
+Some test plans number theirs in **decimal** instead. `RVCRUNM.S.F20` is bit 20 (`DIRECTMODECH`), and the Electrical Alarm and Electrical Protection Alarm plans do the same. `F20` is outside the `[0x00..0x1f]` range the Guidelines define, so those codes are non-conformant, and the published templates inherit them because the PICS XML is generated from the test plan text.
 
-PICS feature codes number the bit in decimal, so the two agree only up to bit 9. Bit 20 becomes `F14`, matches nothing in the template, and the feature is left unsupported with no warning. Clusters derived from Alarm Base put their whole feature set at bit 20 and above, so every feature of such a cluster disappears. Change `:02x` to `:02d` before running it.
+If your cluster is one of those, the generator emits the hex spelling, matches nothing in the template, and leaves the feature unsupported **with no warning**. Change `:02x` to `:02d` locally to work against it.
+
+Do not carry that patch upstream: it is correct only for the non-conformant clusters and breaks the conformant ones. Emitting both spellings does not work either, since hex bit 20 and decimal bit 14 are both `F14`. Check which convention your own templates use before you trust the output, and verify the generated PICS against the feature map the device actually reports.
 
 ### What it cannot fill
 
