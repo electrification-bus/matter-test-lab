@@ -3,7 +3,7 @@
 A PICS declares, per endpoint, every cluster, feature, attribute, command and event a device implements. Somebody else acts on it, which is why it is worth getting right:
 
 - **The Test Harness** reads it to decide which steps of a test apply. Run without one and PICS-gated steps behave as though the feature is absent, so tests quietly pass having checked less than you think.
-- **A test event's organizers** aggregate submitted PICS to judge, across participants, whether the release's new features have working test coverage.
+- **A test event's organizers** aggregate submitted PICS across participants to judge whether the release under validation has working test coverage.
 - **An Authorized Test Lab** derives from it the set of test cases your product must pass. Understate it and you certify less than you built; overstate it and the ATL runs tests your device cannot pass.
 
 ## Two jobs, and they are not the same
@@ -12,7 +12,11 @@ The word "PICS" covers two tasks that pull in different directions. Being clear 
 
 ### Proving new cluster support works
 
-You are adding a cluster to the SDK, with the test plan and scripts that go with it, and a reference app to exercise them. This is what most test event participation looks like: the specification is not public yet, and you are demonstrating that the feature and its tests hold together. Certification is a separate activity that happens later, at an ATL, once the release is out.
+You are adding a cluster to the SDK, with the test plan and scripts that go with it, and a reference app to exercise them.
+
+This is what most test event participation looks like, because a test event and a certification ask different questions. A test event asks **does this release hold together?** Certification asks **does my device certify against a release?** Different subject, different activity.
+
+TE1, TE2 and the SVE are sequential milestones in the run-up to a Matter release. Contributors bring the features they have added and establish that the test coverage for them runs and passes, before the release is adopted; the specification is not public yet. Certification comes later, at an Authorized Test Lab, against a version that is already out.
 
 Two different PICS questions live here, and they have different answers:
 

@@ -24,7 +24,16 @@ You do not need a second Pi for this. The Test Harness will test any commissiona
 
 ### Test event (`lab_mode: event`)
 
-You are participating in a CSA test event. The event pins a specific Test Harness tag and a specific SDK commit and you must use **those exact values**, so in this mode both are required and an unset one fails immediately with an explanation. Defaulting to something else would quietly invalidate your results, so the tool refuses to guess.
+You are participating in a CSA test event. The two activities ask different questions about different subjects:
+
+| | Question | Subject |
+|---|---|---|
+| Test event (TE1, TE2, SVE) | does this release hold together? | the release |
+| Certification | does my device certify against a release? | the device |
+
+TE1, TE2 and the SVE are sequential milestones in the run-up to a Matter release. Contributors bring the features they have added and establish that the test coverage for them runs and passes, before the release is adopted. Certification comes later, at an Authorized Test Lab, against a version that is already out.
+
+The event pins a specific Test Harness tag and a specific SDK commit and you must use **those exact values**, so in this mode both are required and an unset one fails immediately with an explanation. Defaulting to something else would quietly invalidate your results, so the tool refuses to guess.
 
 ```yaml
 lab_mode: event
