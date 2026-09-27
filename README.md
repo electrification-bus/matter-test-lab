@@ -241,7 +241,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 | `docs/pi-image-quirks.md` | The two Pi Ubuntu image quirks and why they are handled. |
 | `docs/pics.md` | Why you need a PICS, deriving one from the device rather than by hand, and the two layouts. |
 | `docs/reliability.md` | The `TC_RT_*` reliability tests: install, run, and what fails quietly. |
-| `scripts/pics_dump.py` | Dump or diff the values in any PICS XML. |
+| `scripts/pics_dump.py` | Dump or diff the values in any PICS XML, or report what a device does not cover of the surface a cluster defines. |
 | `scripts/run_pics_tool.py` | Validate a PICS set through the CSA PICS Tool headlessly. |
 | `CHANGELOG.md` | What has changed, newest first. |
 | `CLAUDE.md` | Shared project context for AI coding agents. |

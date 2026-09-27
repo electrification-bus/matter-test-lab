@@ -23,7 +23,28 @@ Two different PICS questions live here, and they have different answers:
 - **Does my test plan hold together?** Do the codes it references exist, is the conformance self-consistent, does every element have an item? That is a question about the *specification*, and the PICS templates are the spec-derived artifact that answers it. They are generated from the test plan text, which also means they inherit whatever the plan got wrong: the hex-versus-decimal split below arrived exactly that way.
 - **What does my reference app actually support?** That is a question about an implementation, and it has to be answered by the implementation. The tests select on it, so a wrong answer means the wrong tests run.
 
-The scripts here are for the second question.
+The scripts here are for the second question, and `pics_dump.py gap` connects the two.
+
+#### The reference app should cover the surface the spec adds
+
+For a release cycle the two questions meet. If the reference app implements only part of the new spec surface, the tests for the rest never run, and nobody finds out they are broken until a product implements them after the release is out. So the **specification defines the coverage target** and the app's PICS is the measurement against it; the difference is a finding, not a fact of life.
+
+The blank template is that target, since it enumerates every item the cluster defines. Compare it against what the device reports, across every endpoint that carries the cluster:
+
+```bash
+./scripts/pics_dump.py gap <template>/Power\ Topology\ Cluster\ Test\ Plan.xml \
+    <filled>/ep1/Power\ Topology\ Cluster\ Test\ Plan.xml \
+    <filled>/ep2/Power\ Topology\ Cluster\ Test\ Plan.xml
+```
+
+**Triage the output rather than acting on it.** Some entries are unreachable by construction:
+
+- **Choice conformance.** `PWRTL`'s `NODE`, `TREE` and `SET` are all `choice="a"`, so a single endpoint can offer exactly one. Covering all three needs three endpoints, not a bigger feature map.
+- **Dependent elements.** `DYPF` requires `SET`, and `AvailableEndpoints` requires `SET`, so skipping one silently removes the others from reach.
+- **Disallowed elements.** An element whose conformance is `X` cannot be offered by any conformant server, so it can never appear.
+- **Provisional elements**, which a release may deliberately not exercise.
+
+What is left after that triage is the real gap, and it is worth knowing before an event rather than after. Run against the SDK's `electrical-protection-app`, for instance, Power Topology reports `F00`, `F02`, `F03`, `A0000` and `A0001` unsupported: it offers `TREE` on both its endpoints, so nothing it exposes ever exercises the node or set topologies.
 
 ### Declaring a product
 
@@ -46,6 +67,8 @@ So even for an app you wrote, the spec gives you a template plus a closure and y
 **A code-driven cluster server makes this worse, and quietly.** In a modern SDK cluster the ZAP configuration only enables the cluster; the attribute, command and feature lists are supplied at runtime by the C++ instance. The SDK's `electrical-protection-app` is a good example: its `.matter` file lists four Electrical Alarm attributes, while the running device serves fourteen, because the feature set is passed in `main.cpp` and the closure is computed from it. Read the design artifact and you understate your own device by ten attributes. Probe it and you get the right answer.
 
 The general rule: the PICS has to describe the binary, because the binary is what the tests run against. Your intent and your build drift.
+
+That is about where the *values* come from. It does not make the binary the standard: in a release cycle the specification is the target, and a reference app that covers less of it than the release adds is a gap to close, not a PICS to declare and move on from. See the gap check above.
 
 ### The tooling is already a hybrid
 
@@ -115,7 +138,8 @@ Dump or diff the `picsItem` values in any PICS XML. Useful for checking what cha
 
 ```bash
 ./scripts/pics_dump.py dump "Electrical Alarm Cluster Test Plan.xml"
-./scripts/pics_dump.py cmp  <template>/Foo.xml <filled>/Foo.xml    # flags differences
+./scripts/pics_dump.py cmp  <template>/Foo.xml <filled>/Foo.xml     # flags differences
+./scripts/pics_dump.py gap  <template>/Foo.xml <filled>/ep*/Foo.xml # coverage gaps
 ```
 
 ### `scripts/run_pics_tool.py`
