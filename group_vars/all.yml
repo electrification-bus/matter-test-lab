@@ -97,3 +97,39 @@ th_log_stage: "{{ playbook_dir }}/results"
 # Optional label for the participant filing these results, used only in the
 # closing message. Set it to your company or handle if you find it useful.
 results_owner: ""
+
+# --- Reliability / stress tests (reliability.yml) -----------------------------
+#
+# The matter-qa scripts (TC_RT_*) are a CSA member repository,
+# CHIP-Specifications/matter-qa. This repo neither vendors nor clones it: point
+# reliability_src at your own checkout, on the branch your test event pins.
+# The Test Harness has no GitHub credentials, which is why the checkout is
+# copied from the control machine rather than cloned on the Pi.
+reliability_src: ""
+reliability_dest: "/home/{{ ansible_user }}/matter-qa"
+
+# The framework's own settings file, as the RUNNER CONTAINER sees it. install.sh
+# mounts the vendored checkout at /matter-qa, so this is not a host path; giving
+# a host path fails the run instantly with FileNotFoundError.
+reliability_container_config: "/matter-qa/src/matter_qa/configs/configFile.yaml"
+reliability_run_config: "/home/{{ ansible_user }}/reliability-run-config.json"
+
+reliability_tests: "TC_RT_1_1"
+reliability_iterations: 25     # CSA suggests 25 for TC_RT_1_1
+reliability_sleep: 2
+# Test cases default to a 900s timeout and most reliability runs exceed it; a run
+# cut off part way files as a failure. Raise this with the iteration count.
+reliability_timeout: 1800
+
+# The DUT binary as the DUT sees it. Leave empty to compose it from the [dut]
+# group's own sdk_dest / dut_out_dir / dut_app_binary; set it when the app the
+# reliability run should exercise is not the one dut.yml builds.
+reliability_app_path: ""
+
+# Extra app arguments, as a mapping rather than a string: every key here becomes
+# a "--<key> <value>" argument verbatim, so hyphenate exactly as the flag is
+# spelled. This is the reliability-run equivalent of dut_app_extra_args.
+#
+#   reliability_app_args:
+#     enable-key: "000102030405060708090a0b0c0d0e0f"
+reliability_app_args: {}

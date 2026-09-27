@@ -151,6 +151,7 @@ Logs land in `./results/` (gitignored). How you submit them is defined by your t
 | `dut.yml` | Clones the SDK at your pinned commit, checks out Linux submodules, bootstraps pigweed, builds an example app, and launches it as a commissionable device. | `verify`, `build`, `apt`, `run` |
 | `th-run.yml` | Drives `th-cli` over SSH to run a test or list of tests headlessly, then fetches the grouped archive, run log and trace logs. | `run`, `collect` |
 | `bootstrap-keys.yml` | Installs your SSH key on a Pi flashed some other way. Not needed after `flash-pi`. | |
+| `reliability.yml` | Installs the matter-qa reliability/stress scripts (`TC_RT_*`) into the Test Harness and runs them. You supply the matter-qa checkout. See [docs/reliability.md](docs/reliability.md). | `install`, `run` |
 
 Every playbook starts by asserting it is talking to the intended, correctly-flashed Pi: login user, OS version and release, architecture, hostname, and that the configured MAC actually belongs to that machine. A wrong or stale flash fails in seconds instead of 45 minutes into a build.
 
@@ -177,6 +178,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 ## Troubleshooting
 
 - **`ansible-playbook` cannot find the inventory, or "Could not match supplied host pattern".** Either you have not copied `examples/inventory.ini` to `inventory.ini`, or you have `ANSIBLE_CONFIG` exported for another project, which wins over this repo's `ansible.cfg`. Run `source setup-env.sh`.
+- **A test passes having checked nothing.** Most often a missing PICS: `th-cli` needs a *flat* folder of XMLs and silently yields zero PICS from a nested one, after which every PICS-gated step behaves as though the feature is absent. See [docs/pics.md](docs/pics.md).
 - **apt fails on a freshly flashed Pi, or `-dev` packages conflict.** Both are known quirks of the Pi Ubuntu image and are worked around automatically. See [docs/pi-image-quirks.md](docs/pi-image-quirks.md).
 - **Commissioning aborts with a SIGABRT that looks like a crash.** Check `dut_discriminator` is 4095 or less. It is a 12-bit field, and an out-of-range value makes both the app and the controller abort in a way that reads like a device fault.
 - **A Test Harness update stops with "Poetry could not be found".** Fixed; update if you are seeing it. pipx installs Poetry into `~/.local/bin`, which a non-interactive SSH session does not have on its `PATH`, and the update's CLI step needs it. It failed after the containers had been stopped, so the symptom was a Test Harness left down on the new code, which looks like a broken install rather than a missing path entry.
@@ -200,6 +202,10 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 | `bootstrap-keys.yml` | Install your SSH key on a Pi flashed another way. |
 | `ansible.cfg` / `setup-env.sh` | Connection defaults; source `setup-env.sh` first. |
 | `docs/pi-image-quirks.md` | The two Pi Ubuntu image quirks and why they are handled. |
+| `docs/pics.md` | Why you need a PICS, deriving one from the device rather than by hand, and the two layouts. |
+| `docs/reliability.md` | The `TC_RT_*` reliability tests: install, run, and what fails quietly. |
+| `scripts/pics_dump.py` | Dump or diff the values in any PICS XML. |
+| `scripts/run_pics_tool.py` | Validate a PICS set through the CSA PICS Tool headlessly. |
 | `CHANGELOG.md` | What has changed, newest first. |
 | `CLAUDE.md` | Shared project context for AI coding agents. |
 

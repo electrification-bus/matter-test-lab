@@ -1,0 +1,227 @@
+---
+# Install and run the matter-qa reliability/stress scripts (TC_RT_*) on the
+# Test Harness.
+#
+# These are not ordinary test cases. An ordinary case talks to a DUT somebody
+# else started; these OWN the DUT app's lifecycle, SSHing in once per iteration
+# to kill the app, wipe its KVS and relaunch it. Everything unusual below
+# follows from that.
+#
+# Run:  ansible-playbook reliability.yml --tags install     # once, and after a TH/SDK bump
+#       ansible-playbook reliability.yml --tags run -e reliability_tests=TC_RT_1_1
+#   More iterations:  -e reliability_iterations=25 -e reliability_timeout=3600
+#
+# Tags: install (vendor matter-qa into the TH, build its runner image)
+#       run     (write the run config, stop the DUT unit, run, restore it)
+#
+# matter-qa is a CSA member repository. This playbook does not clone it for
+# you: point reliability_src at your own checkout. See docs/reliability.md.
+
+- name: Install the matter-qa reliability framework on the Test Harness
+  hosts: th
+  gather_facts: true
+  tags: [install]
+
+  tasks:
+    - name: Require a local matter-qa checkout
+      ansible.builtin.assert:
+        that: reliability_src | length > 0
+        fail_msg: >-
+          reliability_src is not set. matter-qa is a CSA member repository
+          (CHIP-Specifications/matter-qa) and this repo neither vendors nor
+          clones it. Clone it yourself, check out the branch your test event
+          pins, and set reliability_src to that path. The Test Harness has no
+          GitHub credentials of its own, which is why the checkout is copied
+          from the control machine rather than cloned on the Pi.
+        quiet: true
+
+    - name: Copy the matter-qa checkout to the Test Harness
+      ansible.posix.synchronize:
+        src: "{{ reliability_src | regex_replace('/?$', '/') }}"
+        dest: "{{ reliability_dest | regex_replace('/?$', '/') }}"
+        delete: true
+        rsync_opts: ["--exclude=.git"]
+
+    # install.sh vendors the checkout into the certification-tool, then builds a
+    # companion image against whatever SDK tag the TH is CURRENTLY pinned to
+    # rather than a hardcoded one, so it cannot drift from the SDK image after an
+    # upgrade. It restarts the backend as its last step.
+    - name: Install the TH adapter and build the runner image (long-running)
+      ansible.builtin.command:
+        cmd: ./install.sh
+        chdir: "{{ reliability_dest }}/th_integration/matter_qa_adapter"
+      register: reliability_install
+      changed_when: true
+      async: 3600
+      poll: 30
+
+    # The backend is restarted by install.sh and answers 502 for a few seconds.
+    # Ask th-cli rather than guessing a sleep.
+    - name: Wait for the Test Harness API to come back
+      ansible.builtin.shell:
+        cmd: 'export PATH="$HOME/.local/bin:$PATH"; th-cli available-tests'
+        executable: /bin/bash
+      register: reliability_tests_available
+      retries: 20
+      delay: 15
+      until: reliability_tests_available.rc == 0
+      changed_when: false
+
+    - name: Confirm the reliability cases are discoverable
+      ansible.builtin.assert:
+        that: "'TC_RT_1_1' in reliability_tests_available.stdout"
+        fail_msg: >-
+          install.sh completed but th-cli does not list TC_RT_1_1. Check that
+          reliability_src is the branch your event pins and re-run.
+        success_msg: "Reliability cases are discoverable via th-cli."
+        quiet: true
+
+    # install.sh reports "th-cli install failed" when th-cli is present but not
+    # on a non-interactive PATH. Harmless, and confusing enough to call out.
+    - name: Note the harmless installer warning
+      ansible.builtin.debug:
+        msg: >-
+          If install.sh printed "th-cli install failed", ignore it: th-cli is
+          installed under ~/.local/bin, which a non-interactive SSH session does
+          not have on its PATH. The check above proves th-cli works.
+
+- name: Run a reliability test case
+  hosts: th
+  gather_facts: true
+  tags: [run]
+
+  tasks:
+    - name: Require the DUT login password
+      ansible.builtin.assert:
+        that: ubuntu_password | length > 0
+        fail_msg: >-
+          ubuntu_password is empty. matter-qa connects from the TEST HARNESS to
+          the DUT, a hop no other playbook makes and for which there is no key,
+          so it authenticates with the password. It must match what the DUT was
+          actually flashed with.
+        quiet: true
+
+    # reliability_tests_arg is a path INSIDE the runner container, where
+    # install.sh mounts the vendored checkout. Passing the host path fails the
+    # run immediately with FileNotFoundError and no other clue.
+    #
+    # Every key under app_config becomes a "--<key> <value>" argument verbatim
+    # (matter_qa/library/platform/raspberrypi/raspi.py, _app_cmd_string), which
+    # is why dut_app_extra_args is expanded into keys here rather than appended
+    # as a string: "enable-key" yields --enable-key.
+    # reliability_tests_arg is a path INSIDE the runner container, where
+    # install.sh mounts the vendored checkout. Passing the host path fails the
+    # run immediately with FileNotFoundError and no other clue.
+    #
+    # The DUT's own variables live in group_vars/dut.yml, which is out of scope
+    # in a play whose host is the TH, so they are read through hostvars.
+    - name: Identify the DUT host
+      ansible.builtin.set_fact:
+        _dut_host: "{{ groups['dut'][0] }}"
+      when: groups['dut'] | length > 0
+
+    # The test runs in a container that does not resolve mDNS, so an inventory
+    # name like matterdut.local will not do: the DUT has to be given as an IP.
+    - name: Read the DUT's IP address
+      ansible.builtin.setup:
+        gather_subset: ["!all", "network"]
+      delegate_to: "{{ _dut_host }}"
+      delegate_facts: true
+      when: groups['dut'] | length > 0
+
+    - name: Require a DUT in the inventory
+      ansible.builtin.assert:
+        that: groups['dut'] | length > 0
+        fail_msg: >-
+          reliability.yml needs a host in the [dut] group: the framework SSHes
+          into it to restart the app between iterations.
+        quiet: true
+
+    # Every key under app_config becomes a "--<key> <value>" argument verbatim
+    # (matter_qa/library/platform/raspberrypi/raspi.py, _app_cmd_string), which
+    # is why extra app arguments are a mapping here rather than the string that
+    # dut_app_extra_args uses: "enable-key" yields --enable-key.
+    - name: Build the reliability overrides
+      ansible.builtin.set_fact:
+        _reliability_app_config: >-
+          {{ {'matter_app': _app_path,
+              'discriminator': dut_discriminator | int,
+              'passcode': dut_setup_code | int}
+             | combine(reliability_app_args) }}
+      vars:
+        _app_path: >-
+          {{ reliability_app_path if reliability_app_path | length > 0
+             else hostvars[_dut_host]['sdk_dest'] ~ '/'
+                  ~ hostvars[_dut_host]['dut_out_dir'] ~ '/'
+                  ~ hostvars[_dut_host]['dut_app_binary'] }}
+
+    # Each of these is ONE Jinja expression returning a dict, not a mapping of
+    # quoted templates. A quoted "{{ x | int }}" renders to the string "1", and
+    # the framework then raises "'str' object cannot be interpreted as an
+    # integer" on number_of_iterations. A whole-expression template keeps the
+    # native type.
+    - name: Write the reliability run config
+      ansible.builtin.copy:
+        dest: "{{ reliability_run_config }}"
+        mode: "0600"
+        content: "{{ _config | to_nice_json }}"
+      vars:
+        _dut_address: >-
+          {{ hostvars[_dut_host]['ansible_default_ipv4']['address']
+             | default(hostvars[_dut_host]['ansible_host'] | default(_dut_host)) }}
+        _rpi: >-
+          {{ {'rpi_hostname': _dut_address,
+              'rpi_username': ansible_user,
+              'rpi_password': ubuntu_password,
+              'rpi_sudo_password': ubuntu_password,
+              'app_config': _reliability_app_config} }}
+        _overrides: >-
+          {{ {'general_configs': {'platform_execution': 'rpi',
+                                  'number_of_iterations': reliability_iterations | int,
+                                  'sleep_duration_between_iterations': reliability_sleep | int},
+              'dut_config': {'rpi': _rpi}} }}
+        _config: >-
+          {{ {'dut_config': {'discriminator': dut_discriminator | string,
+                             'setup_code': dut_setup_code | string,
+                             'pairing_mode': dut_pairing_mode,
+                             'chip_timeout': none,
+                             'chip_use_paa_certs': true,
+                             'trace_log': true},
+              'test_parameters': {
+                  'timeout': reliability_timeout | int,
+                  'string-arg': 'reliability_tests_arg:' ~ reliability_container_config,
+                  'json-arg': 'overwrite_reliability_tests_args:' ~ (_overrides | to_json)}} }}
+
+    # The framework starts and stops the app itself. Our unit runs it as root
+    # and the framework's _kill_app() issues a plain kill as the SSH user, which
+    # cannot touch it, so leaving the unit up means two instances fighting over
+    # one KVS.
+    - name: Stop the DUT app unit for the duration of the run
+      become: true
+      ansible.builtin.systemd:
+        name: matter-dut
+        state: stopped
+      failed_when: false
+      delegate_to: "{{ groups['dut'][0] }}"
+      when: groups['dut'] | length > 0
+
+    - name: Run the reliability case(s)
+      ansible.builtin.shell:
+        cmd: >-
+          export PATH="$HOME/.local/bin:$PATH"; cd ~;
+          th-cli run-tests --tests-list {{ reliability_tests }}
+          --config {{ reliability_run_config }} --no-color
+        executable: /bin/bash
+      register: reliability_run
+      changed_when: true
+
+    - name: Show run output
+      ansible.builtin.debug:
+        var: reliability_run.stdout_lines
+
+    - name: Remind that the DUT unit is still stopped
+      ansible.builtin.debug:
+        msg: >-
+          The matter-dut unit is stopped and the app is now whatever the
+          framework last left running. Before any ordinary test case, restore it
+          with: ansible-playbook dut.yml --tags run
