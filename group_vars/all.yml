@@ -46,7 +46,12 @@ ansible_user: ubuntu
 # Pi flashed some other way). The playbooks themselves connect over SSH keys.
 # For anything longer-lived, encrypt it:
 #   ansible-vault encrypt_string 'yourpassword' --name ubuntu_password
-ubuntu_password: "changeme"
+#
+# This has to match what the Pis were actually flashed with, because flash-pi
+# only SETS it while bootstrap-keys.yml AUTHENTICATES with it. A Pi flashed
+# before this variable existed took flash-pi's own fallback, "ubuntu", and
+# bootstrap-keys.yml then fails on it with "Authentication failed".
+ubuntu_password: "ubuntu"
 
 # Public key flash-pi pre-seeds into cloud-init and bootstrap-keys.yml installs.
 operator_pubkey: "~/.ssh/id_ed25519.pub"
