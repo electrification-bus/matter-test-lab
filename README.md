@@ -44,7 +44,7 @@ Both coordinates are whatever your event's materials say. `th_version` is passed
 
 ## What this repo will never ship
 
-Test events pin coordinates and distribute test plans and PICS files to participants. **None of that is in this repo, and none of it will be.** In event mode the two coordinates are empty by design, and PICS are a path you supply (`th_pics_folder`) pointing at a folder you have placed on the Test Harness.
+Test events pin coordinates and distribute test plans and PICS files to participants. **None of that is in this repo, and none of it will be.** In event mode the two coordinates are empty by design, and PICS are a path you supply (`th_pics_folder`) pointing at a folder you have placed on the Test Harness. The repo helps you *build* and check that folder ([docs/pics.md](docs/pics.md)) without shipping a single PICS XML, and the same applies to the reliability scripts: `reliability.yml` installs a checkout you provide.
 
 If you do not have access to those materials, that is between you and the [CSA](https://csa-iot.org/); this repo will simply tell you what is missing. Nothing the automation *installs* is gated: the Test Harness, the Matter SDK and Ubuntu are all public.
 
@@ -64,7 +64,7 @@ Control machine:
 
 ## The workflow
 
-Three steps, in order: configure, flash, run.
+Configure, flash, run. Steps 4 and 5 are optional and depend on what you are doing: a PICS once you move past the tests that need no arguments, and the reliability scripts if your test event asks for them.
 
 ### 1. Configure
 
@@ -132,6 +132,32 @@ ansible-playbook dut.yml --tags run
 ansible-playbook th-run.yml -e th_tests=TC-ACL-2.1
 ```
 
+### 4. Give the tests a PICS
+
+`TC-ACL-2.1` runs without one. Most cluster tests gate individual steps on PICS, and with none supplied they behave as though every feature is absent, so a test can pass having checked almost nothing. A PICS is also the artifact an Authorized Test Lab derives your required test cases from, so it is worth having long before certification.
+
+Derive it from the running device rather than hand-ticking hundreds of items, then point `th_pics_folder` at it:
+
+```bash
+ansible-playbook th-run.yml -e th_tests=TC-FOO-1.1 \
+    -e th_pics_folder=/home/ubuntu/pics-ep1 \
+    -e '{"th_test_parameters": {"endpoint": "1"}}'
+```
+
+The folder is one you place on the Test Harness, and it has to be **flat**: `th-cli` lists it non-recursively and silently yields zero PICS from a nested one. [docs/pics.md](docs/pics.md) covers deriving it with the SDK's generator, the four things that generator cannot fill, the two layouts its consumers need, and the two scripts here for checking the result.
+
+### 5. Reliability tests, if your event asks for them
+
+The matter-qa reliability scripts (`TC_RT_*`) loop commissioning, multi-admin, discovery and reboot to surface intermittent faults a single pass never shows. They are unlike everything above: they **own the DUT app's lifecycle**, restarting it once per iteration, so `reliability.yml` stops the `matter-dut` unit for the duration.
+
+```bash
+ansible-playbook reliability.yml --tags install     # once; you supply the matter-qa checkout
+ansible-playbook reliability.yml --tags run -e reliability_tests=TC_RT_1_1
+ansible-playbook dut.yml --tags run                 # restore the DUT afterwards
+```
+
+See [docs/reliability.md](docs/reliability.md).
+
 Most cluster tests need arguments that `TC-ACL-2.1` does not. Pass them with `th_test_parameters`, which becomes the run config's `test_parameters`; the Test Harness turns each key into a `--<key> <value>` argument on the test's command line:
 
 ```bash
@@ -179,6 +205,8 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 
 - **`ansible-playbook` cannot find the inventory, or "Could not match supplied host pattern".** Either you have not copied `examples/inventory.ini` to `inventory.ini`, or you have `ANSIBLE_CONFIG` exported for another project, which wins over this repo's `ansible.cfg`. Run `source setup-env.sh`.
 - **A test passes having checked nothing.** Most often a missing PICS: `th-cli` needs a *flat* folder of XMLs and silently yields zero PICS from a nested one, after which every PICS-gated step behaves as though the feature is absent. See [docs/pics.md](docs/pics.md).
+- **A generated PICS leaves whole features unsupported.** The PICS Guidelines spell a feature bit in hex (`DRLK.S.F0b` is bit 11) and the SDK's generator follows that, but some test plans number theirs in decimal, so the generated item number matches nothing in the template and the feature is dropped without a warning. See [docs/pics.md](docs/pics.md).
+- **A reliability run fails immediately with `FileNotFoundError`.** Its settings path is read inside the runner container, not on the Test Harness filesystem. `reliability_container_config` holds the right one. See [docs/reliability.md](docs/reliability.md).
 - **apt fails on a freshly flashed Pi, or `-dev` packages conflict.** Both are known quirks of the Pi Ubuntu image and are worked around automatically. See [docs/pi-image-quirks.md](docs/pi-image-quirks.md).
 - **Commissioning aborts with a SIGABRT that looks like a crash.** Check `dut_discriminator` is 4095 or less. It is a 12-bit field, and an out-of-range value makes both the app and the controller abort in a way that reads like a device fault.
 - **A Test Harness update stops with "Poetry could not be found".** Fixed; update if you are seeing it. pipx installs Poetry into `~/.local/bin`, which a non-interactive SSH session does not have on its `PATH`, and the update's CLI step needs it. It failed after the containers had been stopped, so the symptom was a Test Harness left down on the new code, which looks like a broken install rather than a missing path entry.
