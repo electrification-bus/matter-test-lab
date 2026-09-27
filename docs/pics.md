@@ -1,18 +1,53 @@
 # PICS
 
-A PICS declares, per endpoint, every cluster, feature, attribute, command and event a device implements. You need one long before you need a test event.
+A PICS declares, per endpoint, every cluster, feature, attribute, command and event a device implements. Somebody else acts on it, which is why it is worth getting right:
 
-- **Developing.** The Test Harness reads it to decide which steps of a test apply. Run without one and PICS-gated steps behave as though the feature is absent, so tests quietly pass having checked less than you think.
-- **Certifying.** The PICS is submitted with the device and is what the Authorized Test Lab uses to derive the set of test cases your device must pass. Understate it and you certify less than you built; overstate it and the ATL runs tests your device cannot pass. This is the artifact, not a by-product.
-- **At a test event.** Same as certification, plus the organizers aggregate submitted PICS to judge readiness across participants.
+- **The Test Harness** reads it to decide which steps of a test apply. Run without one and PICS-gated steps behave as though the feature is absent, so tests quietly pass having checked less than you think.
+- **An Authorized Test Lab** derives from it the set of test cases your device must pass. Understate it and you certify less than you built; overstate it and the ATL runs tests your device cannot pass.
+- **A test event's organizers** aggregate submitted PICS to judge readiness across participants.
 
-In all three cases the PICS is a claim about your device that somebody else acts on, so it is worth deriving rather than typing.
+## Two jobs, and they are not the same
 
-**This repo distributes no PICS XMLs.** The blank templates are CSA member documents, and a filled PICS describes your device. Both are yours to supply; the two scripts here only operate on files you already have. If you do not have access to the templates, that is between you and the [CSA](https://csa-iot.org/).
+The word "PICS" covers two tasks that pull in different directions. Being clear which you are doing saves a lot of confusion.
 
-## Derive it from the device, do not hand-fill it
+### Declaring a device
 
-The Matter SDK ships a generator that reads a live device and fills the templates from what it reports: [`src/tools/PICS-generator`](https://github.com/project-chip/connectedhomeip/tree/master/src/tools/PICS-generator). It is not the official tool, but hand-ticking several hundred items across three endpoints has no way to verify you did not mistype one.
+You have an implementation, and you need to state what it supports: certification, a test event, or just running the right tests against it during development. **This is the common case, it is what the scripts here are for, and the answer has to come from the implementation.**
+
+### Authoring or checking a test plan
+
+You are adding SDK support for a new cluster and writing the test plan and scripts that go with it. Here the interesting question is about the *specification*, not any one device: do the PICS codes my plan references exist, is the conformance self-consistent, does every element have an item?
+
+That is a real use for a spec-derived PICS, and the templates themselves are the spec-derived artifact: **the PICS XML is generated from the test plan text.** Which also means a spec-derived PICS inherits whatever your test plan got wrong. The hex-versus-decimal split described below arrived exactly that way.
+
+## Why the values come from the device, not the spec
+
+It is tempting to think that for your own reference app you can write the PICS from the design, since you chose what to build. Mostly you cannot.
+
+A specification defines what is *possible* and the conformance closure over it. It cannot tell you what an implementation chose:
+
+| | From the spec? |
+|---|---|
+| Mandatory given your choices (declare `ADJUST`, and its threshold attributes become mandatory) | yes |
+| The choices themselves (does this build offer `ADJUST` at all?) | no |
+| Anything conformance marks optional | no |
+
+So even for an app you wrote, the spec gives you a template plus a closure and you still supply every choice, which is most of a PICS.
+
+**A code-driven cluster server makes this worse, and quietly.** In a modern SDK cluster the ZAP configuration only enables the cluster; the attribute, command and feature lists are supplied at runtime by the C++ instance. The SDK's `electrical-protection-app` is a good example: its `.matter` file lists four Electrical Alarm attributes, while the running device serves fourteen, because the feature set is passed in `main.cpp` and the closure is computed from it. Read the design artifact and you understate your own device by ten attributes. Probe it and you get the right answer.
+
+The general rule: the PICS has to describe the binary, because the binary is what the tests run against. Your intent and your build drift.
+
+### The tooling is already a hybrid
+
+Spec where the device cannot answer, device everywhere else:
+
+- The generator takes `--dm-xml`, the per-release spec scrape, and uses it for **event** conformance, because the device cannot report its event list (the global attribute was removed).
+- **TC-IDM-10.4** (`TC_pics_checker.py` in the SDK) verifies a *declared* PICS against the device. The model the ecosystem settled on is declare, then verify. If deriving from the spec were sufficient, that test would have nothing to do.
+
+## Generating one
+
+The Matter SDK ships a generator that reads a live device and fills the templates from what it reports: [`src/tools/PICS-generator`](https://github.com/project-chip/connectedhomeip/tree/master/src/tools/PICS-generator). It is not the official tool, and its output still has to pass the official PICS Tool, but hand-ticking several hundred items across three endpoints has no way to catch a single mistyped one.
 
 ```bash
 # DUT running and advertising as commissionable
@@ -90,4 +125,7 @@ Three things about the tool the script exists to handle, each of which fails qui
 - **`Save TCList` right after a validate can save nothing.** `picstool_savetclist()` checks `tclist.length` before calling the `picstool_update()` that fills it, and that does not happen synchronously.
 - **Saves go through `saveAs()`**, so replacing it with a collector is how you get the bytes without fighting browser downloads.
 
-Validation passing is not the same as the PICS being right. Read the saved TC list and confirm the cases you expect are in it.
+Validation passing is not the same as the PICS being right. Two further checks are worth the minutes:
+
+- **Read the saved TC list** and confirm the cases you expect to run are in it. That is the thing the PICS exists to produce.
+- **Run TC-IDM-10.4** (`TC_pics_checker.py` in the SDK), which compares a declared PICS against the device and is meant to be one of the first tests run at certification. It takes `--endpoint` and `--PICS`, pointed at the directory of XMLs for that endpoint.
