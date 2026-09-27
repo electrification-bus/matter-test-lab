@@ -3,22 +3,27 @@
 A PICS declares, per endpoint, every cluster, feature, attribute, command and event a device implements. Somebody else acts on it, which is why it is worth getting right:
 
 - **The Test Harness** reads it to decide which steps of a test apply. Run without one and PICS-gated steps behave as though the feature is absent, so tests quietly pass having checked less than you think.
-- **An Authorized Test Lab** derives from it the set of test cases your device must pass. Understate it and you certify less than you built; overstate it and the ATL runs tests your device cannot pass.
-- **A test event's organizers** aggregate submitted PICS to judge readiness across participants.
+- **A test event's organizers** aggregate submitted PICS to judge, across participants, whether the release's new features have working test coverage.
+- **An Authorized Test Lab** derives from it the set of test cases your product must pass. Understate it and you certify less than you built; overstate it and the ATL runs tests your device cannot pass.
 
 ## Two jobs, and they are not the same
 
-The word "PICS" covers two tasks that pull in different directions. Being clear which you are doing saves a lot of confusion.
+The word "PICS" covers two tasks that pull in different directions. Being clear which you are doing saves a lot of confusion, and at a test event you are usually doing both at once.
 
-### Declaring a device
+### Proving new cluster support works
 
-You have an implementation, and you need to state what it supports: certification, a test event, or just running the right tests against it during development. **This is the common case, it is what the scripts here are for, and the answer has to come from the implementation.**
+You are adding a cluster to the SDK, with the test plan and scripts that go with it, and a reference app to exercise them. This is what most test event participation looks like: the specification is not public yet, and you are demonstrating that the feature and its tests hold together. Certification is a separate activity that happens later, at an ATL, once the release is out.
 
-### Authoring or checking a test plan
+Two different PICS questions live here, and they have different answers:
 
-You are adding SDK support for a new cluster and writing the test plan and scripts that go with it. Here the interesting question is about the *specification*, not any one device: do the PICS codes my plan references exist, is the conformance self-consistent, does every element have an item?
+- **Does my test plan hold together?** Do the codes it references exist, is the conformance self-consistent, does every element have an item? That is a question about the *specification*, and the PICS templates are the spec-derived artifact that answers it. They are generated from the test plan text, which also means they inherit whatever the plan got wrong: the hex-versus-decimal split below arrived exactly that way.
+- **What does my reference app actually support?** That is a question about an implementation, and it has to be answered by the implementation. The tests select on it, so a wrong answer means the wrong tests run.
 
-That is a real use for a spec-derived PICS, and the templates themselves are the spec-derived artifact: **the PICS XML is generated from the test plan text.** Which also means a spec-derived PICS inherits whatever your test plan got wrong. The hex-versus-decimal split described below arrived exactly that way.
+The scripts here are for the second question.
+
+### Declaring a product
+
+A finished device going to an ATL, or being run against the full certification suite. Same mechanics as above, higher stakes, and the same answer: the values come from the implementation.
 
 ## Why the values come from the device, not the spec
 

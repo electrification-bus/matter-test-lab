@@ -134,7 +134,7 @@ ansible-playbook th-run.yml -e th_tests=TC-ACL-2.1
 
 ### 4. Give the tests a PICS
 
-`TC-ACL-2.1` runs without one. Most cluster tests gate individual steps on PICS, and with none supplied they behave as though every feature is absent, so a test can pass having checked almost nothing. A PICS is also the artifact an Authorized Test Lab derives your required test cases from, so it is worth having long before certification.
+`TC-ACL-2.1` runs without one. Most cluster tests gate individual steps on PICS, and with none supplied they behave as though every feature is absent, so a test can pass having checked almost nothing. If you are bringing up a new cluster, this is also how you show its tests actually select and run; certification is a later, separate activity at an Authorized Test Lab.
 
 Derive it from the running device rather than hand-ticking hundreds of items, then point `th_pics_folder` at it:
 
