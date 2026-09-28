@@ -1,0 +1,70 @@
+---
+# Run ONE test case as its own th-cli run, then fetch that run's log.
+#
+# Included in a loop by th-run.yml. One case per run is deliberate: the Test
+# Harness logs per RUN, not per test case, and offers no per-case export, so a
+# run covering ten cases produces one log covering ten cases. Result submission
+# systems want a log per result, and a reviewer should not have to find one case
+# inside a 20 MB file.
+#
+# Expects: one_test (the test id), and th-run.yml's own vars.
+
+- name: "Run {{ one_test }}"
+  # pipefail is deliberately NOT set, hence the noqa. The prompt feeder is killed
+  # by SIGPIPE the moment th-cli stops reading, which is the normal end of a
+  # successful run; under pipefail that surfaces as exit 141 and every passing
+  # run would be reported as a failure.
+  #
+  # Two different prompts can appear, and they do not take the same answer:
+  #   "Do you want to reuse the previous commissioning information?"  1=YES 2=NO
+  #   "Make sure the DUT is in Commissioning Mode"                    1=DONE 2=FAILED
+  # So a single repeated answer cannot express "commission afresh, then proceed".
+  # th_commission_first sends one 2 and then 1 forever, which is what a DUT that
+  # has just been relaunched needs. Answering 1 there instead makes the TH reuse
+  # a fabric the DUT no longer has, and the run fails on operational discovery
+  # timeout, which reads like a broken device.
+  ansible.builtin.shell: # noqa: risky-shell-pipe
+    cmd: >-
+      export PATH="$HOME/.local/bin:$PATH"; cd ~;
+      {% if th_commission_first %}{ printf '2\n'; yes {{ th_prompt_answer }}; }{% else %}yes {{ th_prompt_answer }}{% endif %}
+      | th-cli run-tests -t {{ one_test }} --config {{ th_run_config }}
+      {% if th_pics_folder | length > 0 %}--pics-config-folder {{ th_pics_folder }}{% endif %}
+      --no-color
+    executable: /bin/bash
+  register: one_run
+  changed_when: true
+  failed_when: false
+
+- name: "Extract run id and log path for {{ one_test }}"
+  ansible.builtin.set_fact:
+    one_run_id: "{{ one_run.stdout | regex_findall('- ID: (\\d+)') | first | default('', true) }}"
+    one_run_log: "{{ one_run.stdout | regex_findall('Log output in: (\\S+)') | first | default('', true) }}"
+    one_run_result: "{{ (one_run.stdout | regex_findall('Results: (.+)') | first | default('no result line', true)) | trim }}"
+
+- name: "Record the outcome of {{ one_test }}"
+  ansible.builtin.set_fact:
+    th_results: "{{ th_results | default([]) + [{'test': one_test, 'id': one_run_id, 'result': one_run_result, 'log': one_run_log}] }}"
+
+- name: "Download the grouped archive for {{ one_test }}"
+  ansible.builtin.shell:
+    cmd: >-
+      export PATH="$HOME/.local/bin:$PATH";
+      th-cli test-run-execution log --id {{ one_run_id }} --grouped
+      -o /home/{{ ansible_user }}/run{{ one_run_id }}-grouped.zip
+    executable: /bin/bash
+  changed_when: true
+  when: one_run_id | length > 0
+
+- name: "Fetch the run log for {{ one_test }}"
+  ansible.builtin.fetch:
+    src: "{{ one_run_log | regex_replace('^\\./', '/home/' + ansible_user + '/') }}"
+    dest: "{{ th_log_stage }}/"
+    flat: true
+  when: one_run_log | length > 0
+
+- name: "Fetch the grouped archive for {{ one_test }}"
+  ansible.builtin.fetch:
+    src: "/home/{{ ansible_user }}/run{{ one_run_id }}-grouped.zip"
+    dest: "{{ th_log_stage }}/"
+    flat: true
+  when: one_run_id | length > 0

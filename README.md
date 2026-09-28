@@ -176,7 +176,17 @@ ansible-playbook th-run.yml -e th_tests=TC-FOO-1.1 \
 
 The endpoint is the one almost every cluster test needs, and omitting it fails in two different ways depending on the test. A run config carries one set of parameters, so group the tests you pass in `th_tests` by the endpoint they run on and make one invocation per group. Take the endpoint from your own device rather than from a script's CI header: those describe the app upstream CI runs the test against, which is usually not yours.
 
-Logs land in `./results/` (gitignored). How you submit them is defined by your test event; this repo does not encode any submission process.
+**Each case runs as its own Test Harness run, and its log is fetched as it finishes.** That is deliberate: the Test Harness logs per *run* and offers no per-case export, so batching ten cases into one run produces a single log covering ten cases, and result submission wants a log per result. Pass as many cases as you like in `th_tests`; they are split and run one at a time.
+
+After relaunching the DUT, the first run needs `-e th_commission_first=true`. The DUT's storage was wiped, so the Harness must commission afresh rather than reuse the fabric it remembers:
+
+```bash
+ansible-playbook dut.yml --tags run
+ansible-playbook th-run.yml -e th_tests=TC-FOO-1.1 -e th_commission_first=true
+ansible-playbook th-run.yml -e th_tests=TC-FOO-1.2,TC-FOO-1.3     # reuse is correct now
+```
+
+Logs land in `./results/` (gitignored), one run log and one grouped archive per case. How you submit them is defined by your test event; this repo does not encode any submission process.
 
 ## The playbooks
 
@@ -213,6 +223,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 ## Troubleshooting
 
 - **`ansible-playbook` cannot find the inventory, or "Could not match supplied host pattern".** Either you have not copied `examples/inventory.ini` to `inventory.ini`, or you have `ANSIBLE_CONFIG` exported for another project, which wins over this repo's `ansible.cfg`. Run `source setup-env.sh`.
+- **A run fails on `operational discovery ... CHIP Error 0x00000032: Timeout`, right after a step called "Commissioning, already done".** The Harness reused a fabric the DUT no longer has, because the DUT was relaunched and its storage wiped. Re-run the first case with `-e th_commission_first=true`. Answering the reuse prompt "no" by hand is not enough on its own: two different prompts appear and they do not share an answer, so a single repeated keystroke either reuses a dead fabric or answers FAILED to "Make sure the DUT is in Commissioning Mode" and cancels the run.
 - **A test passes having checked nothing.** Most often a missing PICS: `th-cli` needs a *flat* folder of XMLs and silently yields zero PICS from a nested one, after which every PICS-gated step behaves as though the feature is absent. See [docs/pics.md](docs/pics.md).
 - **A generated PICS leaves whole features unsupported.** The PICS Guidelines spell a feature bit in hex (`DRLK.S.F0b` is bit 11) and the SDK's generator follows that, but some test plans number theirs in decimal, so the generated item number matches nothing in the template and the feature is dropped without a warning. See [docs/pics.md](docs/pics.md).
 - **A reliability run fails immediately with `FileNotFoundError`.** Its settings path is read inside the runner container, not on the Test Harness filesystem. `reliability_container_config` holds the right one. See [docs/reliability.md](docs/reliability.md).
