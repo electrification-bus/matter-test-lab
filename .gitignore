@@ -24,3 +24,7 @@ AGENTS.local.md
 
 *.retry
 .DS_Store
+
+# Python bytecode from importing scripts/ as a module
+__pycache__/
+*.pyc
