@@ -28,3 +28,6 @@ AGENTS.local.md
 # Python bytecode from importing scripts/ as a module
 __pycache__/
 *.pyc
+
+# Ansible local cache
+.ansible/

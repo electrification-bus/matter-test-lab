@@ -133,3 +133,20 @@ reliability_app_path: ""
 #   reliability_app_args:
 #     enable-key: "000102030405060708090a0b0c0d0e0f"
 reliability_app_args: {}
+
+# Some cases read the data model XMLs, at a path inside the runner container.
+# TC_RT_1_2 and TC_RT_2_1 require it; it is harmless for the others.
+reliability_matter_xml_root: "/root/python_testing/data_model/1.7"
+
+# The onboarding payload, for cases that rediscover and recommission rather than
+# reusing the first commissioning (TC_RT_2_1). Printed by the app at startup.
+reliability_setup_payload: {}
+#   reliability_setup_payload:
+#     setup_code: "34970112332"
+#     qr_code: "MT:-24J042C00KA0648G00"
+
+# Per-case settings, keyed by test case name exactly as the test is called. The
+# structure must mirror configFile.yaml. Two cases need entries here:
+#   TC_RT_1_2: open_commissioning_window_timeout
+#   TC_RT_2_2: alter_device_network_config, which CHANGES THE DUT'S IP ADDRESS
+reliability_test_case_config: {}

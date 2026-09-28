@@ -174,12 +174,17 @@
               'rpi_username': ansible_user,
               'rpi_password': ubuntu_password,
               'rpi_sudo_password': ubuntu_password,
-              'app_config': _reliability_app_config} }}
+              'app_config': _reliability_app_config}
+             | combine(reliability_setup_payload) }}
+        _general: >-
+          {{ {'platform_execution': 'rpi',
+              'number_of_iterations': reliability_iterations | int,
+              'sleep_duration_between_iterations': reliability_sleep | int,
+              'matter_xml_root': reliability_matter_xml_root} }}
         _overrides: >-
-          {{ {'general_configs': {'platform_execution': 'rpi',
-                                  'number_of_iterations': reliability_iterations | int,
-                                  'sleep_duration_between_iterations': reliability_sleep | int},
-              'dut_config': {'rpi': _rpi}} }}
+          {{ {'general_configs': _general, 'dut_config': {'rpi': _rpi}}
+             | combine({'test_case_config': reliability_test_case_config}
+                       if reliability_test_case_config else {}) }}
         _config: >-
           {{ {'dut_config': {'discriminator': dut_discriminator | string,
                              'setup_code': dut_setup_code | string,

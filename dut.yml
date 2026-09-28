@@ -166,6 +166,39 @@
       failed_when: false
       tags: [run]
 
+    # Stopping the unit is not enough. The matter-qa reliability framework starts
+    # the app itself, as the SSH user and outside systemd, and leaves it running
+    # when a run ends. systemd knows nothing about that process, so the next
+    # launch dies on "Address already in use" binding port 5540 and the DUT never
+    # advertises. That reads as a broken device rather than a stale process.
+    - name: Kill any DUT app instance systemd does not own
+      become: true
+      #
+      # The pattern is bracketed ([c]hip-...) so it cannot match the shell that
+      # runs it: that shell's own command line contains the literal "[c]hip-...",
+      # which the regex does not match. Without this, pkill -f kills its own
+      # parent shell and the task fails with rc -15 before any "|| true" runs.
+      ansible.builtin.shell: |
+        pat='[{{ dut_app_binary[0] }}]{{ dut_app_binary[1:] }}'
+        pkill -f "$pat" 2>/dev/null || true
+        sleep 2
+        pkill -9 -f "$pat" 2>/dev/null || true
+        exit 0
+      changed_when: false
+      tags: [run]
+
+    - name: Require port 5540 to be free before launching
+      become: true
+      ansible.builtin.shell: |
+        set -o pipefail
+        ss -lntup 2>/dev/null | grep -c ':5540 ' || true
+      args:
+        executable: /bin/bash
+      register: _port5540
+      changed_when: false
+      failed_when: _port5540.stdout | trim | int > 0
+      tags: [run]
+
     - name: Reset unit state and clear commissioning KVS (fresh commissionable state)
       become: true
       ansible.builtin.shell: |
