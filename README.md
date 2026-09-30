@@ -69,13 +69,27 @@ Hardware:
 
 - **One or two Raspberry Pis.** One is always the Test Harness. A second becomes the reference DUT, which you only need if you are not supplying your own device. Developed on Pi 5 (8 GB); a Pi 4 with 4 GB or more should also work.
 - **A microSD card per Pi, 64 GB or larger**, plus a card reader. The DUT's SDK checkout and build run into tens of GB, so 32 GB is tight there; the Test Harness is less demanding.
-- Power for each Pi, and both on the same LAN as your control machine. Wired Ethernet is easiest. mDNS (`.local`) must resolve on your network.
+- Power for each Pi, and both on the same LAN as your control machine. mDNS (`.local`) must resolve on your network. See [Wired, and what WiFi would take](#wired-and-what-wifi-would-take).
 
 Control machine:
 
 - **macOS** for `flash-pi`, which uses `diskutil`. It needs `xz` and `pv` (`brew install xz pv`); `curl`, `shasum` and `diskutil` are built in. The Ansible playbooks themselves are platform-neutral, so if you flash the cards some other way you can drive them from Linux.
 - **Ansible** (a virtualenv or `pipx install ansible` is fine).
 - An **SSH keypair**, whose public key path goes in `operator_pubkey`.
+
+### Wired, and what WiFi would take
+
+**This lab is wired Ethernet by design, and that is the only configuration it has been run in.** Nothing here is tested over WiFi. Saying so plainly because discovery is the whole game in Matter testing, and discovery is where a wireless network differs.
+
+Nothing in the playbooks names an interface. Ansible reaches both Pis over SSH by their `.local` names, and the Test Harness and DUT talk over whatever the OS routes, so WiFi ought to work. Three things to expect if you try it:
+
+- **`flash-pi` does not seed WiFi credentials.** It writes cloud-init `user-data` with the hostname and your SSH key only. For a wireless Pi, add a `network-config` file to the boot partition alongside it, or first-boot on Ethernet and configure netplan before unplugging.
+- **mDNS depends on multicast, and access points are where multicast goes to die.** Client isolation, multicast-to-unicast conversion and IGMP snooping all break `.local` resolution in ways that look like a broken DUT rather than a broken network. If commissioning finds nothing, test `avahi-browse` before suspecting the device.
+- **WiFi power save adds latency and drops.** Matter's discovery and CASE timeouts are not generous. `iw dev wlan0 set power_save off` is worth trying before concluding anything.
+
+One thing gets *better* on WiFi: the hostname quirk in [Troubleshooting](#troubleshooting) disappears, because the SDK's preference for the `wlan0` MAC is then the interface actually carrying traffic.
+
+If you do run this over WiFi, an issue or PR saying what broke would be welcome.
 
 ## The workflow
 
