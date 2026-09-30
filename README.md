@@ -240,6 +240,16 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 - **A test aborts with "The --endpoint flag is required for this test."** Pass `th_test_parameters`, for example `-e '{"th_test_parameters": {"endpoint": "1"}}'`. A test guarded by `@run_if_endpoint_matches` fails this way; one without that guard instead falls back to its own `default_endpoint`, usually 0, and fails against the root node as though the device were broken. A run with a missing endpoint can therefore look partly healthy.
 - **A test is skipped rather than run, and files as no result.** `@run_if_endpoint_matches` skips when the configured endpoint does not offer the feature the test gates on. Check the endpoint against your device, not against the script's CI header.
 - **Tests that drive a TestEventTrigger report a pass without testing anything.** Set `dut_app_extra_args` to pass `--enable-key`. The example apps zero-initialize the key, so `GeneralDiagnostics.TestEventTriggersEnabled` reads false, and a test that checks it then commonly marks its remaining steps skipped and returns, which the framework records as a pass. Some tests assert instead and fail loudly; do not assume a green run means the key was set.
+- **The DUT's Matter hostname names `wlan0`, on an Ethernet-only Pi.** Expected, and not a misconfiguration. On Linux the SDK takes the primary MAC from the interface named by `CHIP_DEVICE_CONFIG_WIFI_STATION_IF_NAME`, default `wlan0`, and matches on the name alone without checking the interface is up or has an address (`src/platform/Linux/ConfigurationManagerImpl.cpp:133`). Every stock Pi has a `wlan0`, so a lab running on Ethernet advertises a hostname one off its `eth0` MAC: `eth0` at `88:a2:9e:1c:cc:36` yields `88A29E1CCC37.local`. Avahi still publishes A records for that name with the real `eth0` address, so resolution works; we could not show any harm. Raised upstream as [connectedhomeip#74524](https://github.com/project-chip/connectedhomeip/issues/74524). Do not chase it when debugging discovery.
+- **Debugging discovery at all.** The two views worth having, run on the Test Harness:
+
+  ```bash
+  avahi-browse -rt _matterc._udp   # commissionable: present before commissioning
+  avahi-browse -rt _matter._tcp    # operational: present only once commissioned
+  avahi-resolve -n <HOSTNAME>.local
+  ```
+
+  An uncommissioned DUT advertises only the first, which is normal rather than a fault. Other Matter products on the LAN show up in both, so match on the hostname derived from your DUT's MAC rather than assuming a record is yours. A controller-side `Avahi resolve failed` followed by `AddressResolve ... CHIP Error 0x00000032: Timeout` is operational discovery failing, which affects only test cases that force a fresh CASE session; cases riding the session established at commissioning are unaffected, so the failure looks selective.
 - **The Test Harness backend exits during install.** Known and self-healed by `--tags backend`. The backend clones the SDK during prestart; if DNS is flaky during the heavy install that clone fails and the container exits. DNS recovers, so a restart re-clones and it comes up.
 
 ## Reference
