@@ -51,6 +51,12 @@ Both coordinates are whatever your event's materials say. `th_version` is passed
 | DUT | your device, or the reference app | usually the reference app |
 | Hardware | 1 Pi + your device | 2 Pis |
 
+### Getting into the CSA GitHub repositories
+
+Membership alone does not get you in. Access to the CSA GitHub organisations is granted on request rather than automatically: email <help@csa-iot.org> and include your GitHub username.
+
+The one that catches people out is [`CHIP-Specifications/matter-qa`](https://github.com/CHIP-Specifications/matter-qa), which holds the reliability scripts an event may require you to run (see [reliability tests](docs/reliability.md)). The test plans live in the same organisation. Ask early: nothing in this repo can fetch them for you, and the request is not instant.
+
 ## What this repo will never ship
 
 Test events pin coordinates and distribute test plans and PICS files to participants. **None of that is in this repo, and none of it will be.** In event mode the two coordinates are empty by design, and PICS are a path you supply (`th_pics_folder`) pointing at a folder you have placed on the Test Harness. The repo helps you *build* and check that folder ([docs/pics.md](docs/pics.md)) without shipping a single PICS XML, and the same applies to the reliability scripts: `reliability.yml` installs a checkout you provide.

@@ -24,6 +24,8 @@ reliability_src: "~/src/matter-qa"
 
 The copy goes from the control machine to the Pi rather than being cloned there, because the Test Harness has no GitHub credentials of its own.
 
+**If you cannot see `matter-qa` at all, that is expected until you ask.** CSA membership does not by itself grant access to the CSA GitHub organisations; it is granted on request. Email <help@csa-iot.org> with your GitHub username. Do this early, because nothing here can fetch the repository for you.
+
 ## Install
 
 ```bash
