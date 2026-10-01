@@ -15,18 +15,19 @@
   # successful run; under pipefail that surfaces as exit 141 and every passing
   # run would be reported as a failure.
   #
-  # Two different prompts can appear, and they do not take the same answer:
-  #   "Do you want to reuse the previous commissioning information?"  1=YES 2=NO
-  #   "Make sure the DUT is in Commissioning Mode"                    1=DONE 2=FAILED
-  # So a single repeated answer cannot express "commission afresh, then proceed".
-  # th_commission_first sends one 2 and then 1 forever, which is what a DUT that
-  # has just been relaunched needs. Answering 1 there instead makes the TH reuse
-  # a fabric the DUT no longer has, and the run fails on operational discovery
-  # timeout, which reads like a broken device.
+  # Every prompt is answered with the same key. That works because th-run.yml
+  # deletes the Harness's commissioning snapshot when th_commission_first is
+  # set, so the "Do you want to reuse the previous commissioning information?"
+  # prompt never appears and the only prompt left is "Make sure the DUT is in
+  # Commissioning Mode", where 1 is DONE.
+  #
+  # Feeding a leading 2 to decline the reuse, which this used to do, is not
+  # reliable: when the reuse prompt is absent that 2 answers FAILED to the
+  # commissioning-mode prompt and cancels the run.
   ansible.builtin.shell: # noqa: risky-shell-pipe
     cmd: >-
       export PATH="$HOME/.local/bin:$PATH"; cd ~;
-      {% if th_commission_first %}{ printf '2\n'; yes {{ th_prompt_answer }}; }{% else %}yes {{ th_prompt_answer }}{% endif %}
+      yes {{ th_prompt_answer }}
       | th-cli run-tests -t {{ one_test }} --config {{ th_run_config }}
       {% if th_pics_folder | length > 0 %}--pics-config-folder {{ th_pics_folder }}{% endif %}
       --no-color

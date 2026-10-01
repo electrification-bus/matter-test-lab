@@ -245,13 +245,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 - **`ansible-playbook` cannot find the inventory, or "Could not match supplied host pattern".** Either you have not copied `examples/inventory.ini` to `inventory.ini`, or you have `ANSIBLE_CONFIG` exported for another project, which wins over this repo's `ansible.cfg`. Run `source setup-env.sh`.
 - **A run fails on `operational discovery ... CHIP Error 0x00000032: Timeout`, or on `Avahi resolve failed`.** The Harness reused a fabric the DUT no longer has, because the DUT was relaunched and its storage wiped. It keeps a commissioning snapshot in `admin_storage.json` and offers to reuse it; reusing it after the DUT's storage was wiped means operational discovery looks for a fabric and node that no longer exist, finds nothing, and times out. **This presents as a network fault and is not one**: the Test Harness host resolves the DUT's records perfectly well at the same moment.
 
-  `-e th_commission_first=true` is meant to decline the reuse, but the prompt feeder is unreliable: two different prompts appear and they do not share an answer, so a single repeated keystroke either reuses a dead fabric or answers FAILED to "Make sure the DUT is in Commissioning Mode" and cancels the run. The deterministic fix is to remove the snapshot so there is nothing to reuse, immediately before the run, because a finished run writes it back:
-
-  ```bash
-  ssh <th> 'sudo docker exec certification-tool-backend-1 rm -f /app/admin_storage.json'
-  ```
-
-  Confirm from the run log that it says `Commissioning complete ... success` rather than `Copying file /app/admin_storage.json to container`.
+  **`th-run.yml` handles this**: `-e th_commission_first=true` now deletes the snapshot before the run rather than trying to decline the reuse prompt, which was never reliable. Use it on the first run after any `dut.yml --tags run`. Confirm from the run log that it says `Commissioning complete ... success` rather than `Copying file /app/admin_storage.json to container`.
 - **A test passes having checked nothing.** Most often a missing PICS: `th-cli` needs a *flat* folder of XMLs and silently yields zero PICS from a nested one, after which every PICS-gated step behaves as though the feature is absent. See [docs/pics.md](docs/pics.md).
 - **A generated PICS leaves whole features unsupported.** The PICS Guidelines spell a feature bit in hex (`DRLK.S.F0b` is bit 11) and the SDK's generator follows that, but some test plans number theirs in decimal, so the generated item number matches nothing in the template and the feature is dropped without a warning. See [docs/pics.md](docs/pics.md).
 - **A reliability run fails immediately with `FileNotFoundError`.** Its settings path is read inside the runner container, not on the Test Harness filesystem. `reliability_container_config` holds the right one. See [docs/reliability.md](docs/reliability.md).

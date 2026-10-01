@@ -28,6 +28,7 @@
     th_test_parameters: {}                                  # per-run test parameters; see below
     th_prompt_answer: "1"                                   # option fed to manual prompts (1=DONE, 2=FAILED)
     th_commission_first: false                              # true after relaunching the DUT: commission afresh
+    th_backend_container: "certification-tool-backend-1"    # where the Harness keeps admin_storage.json
     th_run_config: "/home/{{ ansible_user }}/run-config.json"
     test_run_id: ""                                           # set via -e for --tags collect
 
@@ -50,6 +51,25 @@
     # group. Take the endpoint from your own device, not from a script's CI
     # block: those describe the app upstream CI runs the test against, which is
     # usually not yours.
+    # The Harness keeps a commissioning snapshot in admin_storage.json and offers
+    # to reuse it. Relaunching the DUT wipes the device's storage, so reusing it
+    # points the controller at a fabric and node that no longer exist: the run
+    # then dies on "Avahi resolve failed" and an AddressResolve timeout that
+    # reads as a network fault and is not one. The Harness host resolves the
+    # DUT's records correctly the whole time.
+    #
+    # Deleting the snapshot is deterministic where declining the reuse prompt is
+    # not. It has to happen immediately before the run, because a finished run
+    # writes the file back.
+    - name: Remove the Harness commissioning snapshot so the run commissions afresh
+      become: true
+      ansible.builtin.command:
+        cmd: docker exec {{ th_backend_container }} rm -f /app/admin_storage.json
+      changed_when: true
+      failed_when: false
+      when: th_commission_first | bool
+      tags: [run]
+
     - name: Write the TH run config (dut_config from group_vars)
       ansible.builtin.copy:
         dest: "{{ th_run_config }}"
