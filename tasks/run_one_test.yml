@@ -40,7 +40,12 @@
   ansible.builtin.set_fact:
     one_run_id: "{{ one_run.stdout | regex_findall('- ID: (\\d+)') | first | default('', true) }}"
     one_run_log: "{{ one_run.stdout | regex_findall('Log output in: (\\S+)') | first | default('', true) }}"
-    one_run_result: "{{ (one_run.stdout | regex_findall('Results: (.+)') | first | default('no result line', true)) | trim }}"
+    # th-cli before v2.15 prints "Results: ..."; v2.15 prints only the run's
+    # state transitions, the last being "Test Run [PASSED]".
+    one_run_result: >-
+      {{ (one_run.stdout | regex_findall('Results: (.+)') | first
+          | default(one_run.stdout | regex_findall('Test Run \[(\w+)\]') | last | default('', true) | lower, true)
+          | default('no result line', true)) | trim }}
 
 - name: "Record the outcome of {{ one_test }}"
   ansible.builtin.set_fact:

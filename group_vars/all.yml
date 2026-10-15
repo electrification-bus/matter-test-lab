@@ -88,6 +88,15 @@ dut_pairing_mode: "onnetwork"   # DutPairingModeEnum; on-network for a Linux/IP 
 dut_discriminator: "3840"
 dut_setup_code: "20202021"
 
+# --- WiFi (wifi.yml) -----------------------------------------------------------
+# Empty by design: a network's credentials are yours, not this repo's. Set them
+# in host_vars/ or with -e. wifi_regdom is the two-letter country of the place
+# the lab runs, e.g. "DE": channels allowed there can be invisible under
+# another country's rules.
+wifi_ssid: ""
+wifi_password: ""
+wifi_regdom: ""
+
 # --- Log collection ----------------------------------------------------------
 
 # Where th-run.yml stages fetched logs on the control machine. Gitignored, so

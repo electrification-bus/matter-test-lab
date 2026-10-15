@@ -122,6 +122,10 @@
     # stamp means an environment from before this was tracked: treat as stale.
     # Bootstrapping is much slower than activating, so it only happens when the
     # two actually differ.
+    #
+    # The build always runs, and ninja decides what is out of date. Skipping it
+    # when the binary exists would launch a binary from whatever SDK revision
+    # last built it, after the checkout has moved.
     - name: Bootstrap the pigweed environment and build the example app (long-running)
       ansible.builtin.shell:
         cmd: >-
@@ -137,8 +141,8 @@
           ./scripts/examples/gn_build_example.sh {{ dut_example_path }} {{ dut_out_dir }}
         chdir: "{{ sdk_dest }}"
         executable: /bin/bash
-        creates: "{{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}"
       register: build_result
+      changed_when: "'ninja: no work to do' not in build_result.stdout"
       async: 7200
       poll: 30
       tags: [build]
@@ -207,11 +211,16 @@
       changed_when: false
       tags: [run]
 
+    # The app logs every mDNS packet it hears, so on a busy network it exceeds
+    # journald's per-unit rate limit within seconds of starting. journald then
+    # drops its startup lines, including the advertising banner the next task
+    # waits for, and a DUT that is advertising reports as failed to come up.
     - name: Launch the DUT example app (transient unit 'matter-dut')
       become: true
       ansible.builtin.command:
         cmd: >-
           systemd-run --unit=matter-dut --working-directory=/tmp
+          -p LogRateLimitIntervalSec=0
           {{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}
           --discriminator {{ dut_discriminator }} --passcode {{ dut_setup_code }}
           {{ dut_app_extra_args }}

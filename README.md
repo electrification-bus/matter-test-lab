@@ -83,9 +83,9 @@ Control machine:
 
 Nothing in the playbooks names an interface. Ansible reaches both Pis over SSH by their `.local` names, and the Test Harness and DUT talk over whatever the OS routes, so WiFi ought to work. Three things to expect if you try it:
 
-- **`flash-pi` does not seed WiFi credentials.** It writes cloud-init `user-data` with the hostname and your SSH key only. For a wireless Pi, add a `network-config` file to the boot partition alongside it, or first-boot on Ethernet and configure netplan before unplugging.
+- **`flash-pi` does not seed WiFi credentials.** It writes cloud-init `user-data` with the hostname and your SSH key only. Set up the lab on Ethernet, then run `wifi.yml` with `wifi_ssid`, `wifi_password` and `wifi_regdom` set in `host_vars/` before unplugging. It leaves `eth0` configured, as a way back in if WiFi does not come up.
 - **mDNS depends on multicast, and access points are where multicast goes to die.** Client isolation, multicast-to-unicast conversion and IGMP snooping all break `.local` resolution in ways that look like a broken DUT rather than a broken network. If commissioning finds nothing, test `avahi-browse` before suspecting the device.
-- **WiFi power save adds latency and drops.** Matter's discovery and CASE timeouts are not generous. `iw dev wlan0 set power_save off` is worth trying before concluding anything.
+- **WiFi power save adds latency and drops.** Matter's discovery and CASE timeouts are not generous. `wifi.yml` turns it off.
 
 One thing gets *better* on WiFi: the hostname quirk in [Troubleshooting](#troubleshooting) disappears, because the SDK's preference for the `wlan0` MAC is then the interface actually carrying traffic.
 
@@ -216,6 +216,7 @@ Logs land in `./results/` (gitignored), one run log and one grouped archive per 
 | `dut.yml` | Clones the SDK at your pinned commit, checks out Linux submodules, bootstraps pigweed, builds an example app, and launches it as a commissionable device. | `verify`, `build`, `apt`, `run` |
 | `th-run.yml` | Drives `th-cli` over SSH to run a test or list of tests headlessly, then fetches the grouped archive, run log and trace logs. | `run`, `collect` |
 | `bootstrap-keys.yml` | Installs your SSH key on a Pi flashed some other way. Not needed after `flash-pi`. | |
+| `wifi.yml` | Joins both Pis to a WiFi network on `wlan0`, leaving `eth0` as it is, and turns off WiFi power save. `-e wifi_state=absent` removes it. | |
 | `reliability.yml` | Installs the matter-qa reliability/stress scripts (`TC_RT_*`) into the Test Harness and runs them. You supply the matter-qa checkout. See [docs/reliability.md](docs/reliability.md). | `install`, `run` |
 
 Every playbook starts by asserting it is talking to the intended, correctly-flashed Pi: login user, OS version and release, architecture, hostname, and that the configured MAC actually belongs to that machine. A wrong or stale flash fails in seconds instead of 45 minutes into a build.
@@ -282,6 +283,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 | `tasks/apt_prepare.yml` | Shared: work around the Pi image's apt quirks. |
 | `flash-pi` | SD card flasher (macOS): cached download, safe disk pick, cloud-init pre-seed. |
 | `bootstrap-keys.yml` | Install your SSH key on a Pi flashed another way. |
+| `wifi.yml` | Join the Pis to a WiFi network. |
 | `ansible.cfg` / `setup-env.sh` | Connection defaults; source `setup-env.sh` first. |
 | `docs/pi-image-quirks.md` | The two Pi Ubuntu image quirks and why they are handled. |
 | `docs/pics.md` | Why you need a PICS, deriving one from the device rather than by hand, and the two layouts. |

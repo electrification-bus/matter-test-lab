@@ -109,6 +109,7 @@ The next five all came out of one job, moving a working lab from one test event'
 | `dut.yml` | DUT build and launch. |
 | `th-run.yml` | Run tests via `th-cli`, fetch logs. |
 | `bootstrap-keys.yml` | Key onboarding for a Pi flashed another way. |
+| `wifi.yml` | Join the Pis to a WiFi network you supply. |
 | `flash-pi` | macOS SD card flasher with cloud-init pre-seed. |
 | `group_vars/` | All settings; `th.yml` and `dut.yml` hold the two you must supply. |
 | `examples/` | Templates for the gitignored `inventory.ini` and `host_vars/`. |

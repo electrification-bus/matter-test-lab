@@ -10,6 +10,7 @@ Moving a working lab from one test event's coordinates to the next one's, which 
 
 ### Added
 
+- `wifi.yml`, which joins the Pis to a WiFi network on `wlan0` without touching `eth0`, sets the regulatory domain, and turns off WiFi power save. The network comes from `host_vars/`; the repository ships no credentials. A CSA training that runs on venue WiFi is the case it was written for.
 - `AGENTS.md`, holding the agent guidance that was in `CLAUDE.md`, so agents other than Claude Code read it too. `CLAUDE.md` now only imports it.
 - `th-run.yml` runs each case in `th_tests` as its own Test Harness run and fetches that run's log as it finishes, rather than batching them. The Harness logs per run and has no per-case export, so a run covering ten cases produced one log covering ten cases, which is not what result submission wants and not something a reviewer can read. It also now summarizes every case's outcome and fails the play if any did not pass, instead of leaving that in the scrollback.
 - `th_commission_first` on `th-run.yml`, for the first run after the DUT is relaunched. Relaunching wipes the DUT's storage, but the Harness still offers to reuse the commissioning it remembers, and accepting leaves the run failing on `operational discovery ... Timeout` several minutes later, which reads like a broken device. It cannot be worked around by changing the existing prompt answer: two prompts appear with different option meanings, so one repeated keystroke either reuses a dead fabric or cancels the run outright.
@@ -26,6 +27,9 @@ Moving a working lab from one test event's coordinates to the next one's, which 
 
 ### Fixed
 
+- `dut.yml` skipped the build whenever the app binary existed, so after the SDK checkout moved it relaunched a binary from whatever revision last built it, and reported it as built. The build now always runs and ninja decides what is out of date.
+- `dut.yml` could report a DUT that was advertising as having failed to come up. The app logs every mDNS packet it hears, so on a busy network it exceeds journald's per-unit rate limit within seconds and journald drops its startup lines, including the banner the readiness probe waits for. The unit now runs with no log rate limit.
+- `th-run.yml` reported "no result line" for every case on Test Harness v2.15, whose `th-cli` no longer prints `Results:`. It now also reads the closing `Test Run [<state>]` line.
 - `ubuntu_password` said `changeme` while the Pis in service answer to `ubuntu`, so `bootstrap-keys.yml` failed on them with "Authentication failed". The variable has two jobs that pull apart once a Pi is in service: `flash-pi` only ever *sets* it, while `bootstrap-keys.yml` *authenticates* with it. A Pi flashed before the variable existed took `flash-pi`'s own fallback, and nothing since compared the two. The value now matches the hardware, and the comment says why it has to.
 
 - A Test Harness update aborted with "Poetry could not be found". pipx installs Poetry into `~/.local/bin`, which a non-interactive SSH session does not have on its `PATH`, and the update's CLI dependency step needs it. Because it failed after the checkout had moved and the containers had been stopped, the harness was left down on the new code. Poetry is now installed ahead of the install-or-update decision, since both paths need it, and both commands export the path.
