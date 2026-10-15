@@ -10,6 +10,7 @@ Moving a working lab from one test event's coordinates to the next one's, which 
 
 ### Added
 
+- `AGENTS.md`, holding the agent guidance that was in `CLAUDE.md`, so agents other than Claude Code read it too. `CLAUDE.md` now only imports it.
 - `th-run.yml` runs each case in `th_tests` as its own Test Harness run and fetches that run's log as it finishes, rather than batching them. The Harness logs per run and has no per-case export, so a run covering ten cases produced one log covering ten cases, which is not what result submission wants and not something a reviewer can read. It also now summarizes every case's outcome and fails the play if any did not pass, instead of leaving that in the scrollback.
 - `th_commission_first` on `th-run.yml`, for the first run after the DUT is relaunched. Relaunching wipes the DUT's storage, but the Harness still offers to reuse the commissioning it remembers, and accepting leaves the run failing on `operational discovery ... Timeout` several minutes later, which reads like a broken device. It cannot be worked around by changing the existing prompt answer: two prompts appear with different option meanings, so one repeated keystroke either reuses a dead fabric or cancels the run outright.
 

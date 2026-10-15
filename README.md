@@ -289,7 +289,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 | `scripts/pics_dump.py` | Dump or diff the values in any PICS XML, or report what a device does not cover of the surface a cluster defines. |
 | `scripts/run_pics_tool.py` | Validate a PICS set through the CSA PICS Tool headlessly. |
 | `CHANGELOG.md` | What has changed, newest first. |
-| `CLAUDE.md` | Shared project context for AI coding agents. |
+| `AGENTS.md` | Shared project context for AI coding agents; `CLAUDE.md` imports it. |
 
 ## Status and contributing
 

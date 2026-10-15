@@ -11,8 +11,9 @@
 # cached outside the repo (~/.cache/matter-pi-images, or $MATTER_PI_IMAGE_CACHE).
 /results/
 
-# Personal AI-agent context stays local; CLAUDE.md (shared project facts) is
-# tracked. Put your own preferences in CLAUDE.local.md instead of editing it.
+# Personal AI-agent context stays local; AGENTS.md (shared project facts) and
+# CLAUDE.md (which imports it) are tracked. Put your own preferences in
+# CLAUDE.local.md instead of editing them.
 CLAUDE.local.md
 AGENTS.local.md
 
