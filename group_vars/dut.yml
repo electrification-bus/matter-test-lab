@@ -62,6 +62,70 @@ dut_app_binary: "chip-all-clusters-app"
 # content, not of this lab.
 dut_app_extra_args: ""
 
+# --- Unattended DUT -----------------------------------------------------------
+#
+# Off: the 'run' tag launches a transient unit, which is gone after a reboot.
+# On: the 'run' tag installs matter-dut as a persistent unit that starts at boot
+# with wiped storage, so power cycling always yields a clean, commissionable DUT.
+# Either way the app is the unit "matter-dut". Turning this off and re-running
+# the 'run' tag removes the persistent unit.
+dut_boot_mode: false
+
+# The interface boot mode waits for, without limit, before starting the app. A DUT
+# run over wifi.yml must set this to wlan0.
+dut_lan_interface: "eth0"
+
+# Seconds boot mode waits for an IPv4 address once the link is up, before starting
+# without one. An app started first never listens for mDNS on IPv4, even once the
+# address arrives. A lease has been seen to take 33s after carrier, on a home switch.
+dut_boot_ipv4_wait: 120
+
+dut_start_script: /usr/local/sbin/matter-dut-start
+dut_switch_script: /usr/local/sbin/matter-dut-use
+dut_app_link: /usr/local/lib/matter-dut-app
+
+# --- Several builds side by side ----------------------------------------------
+#
+# Empty: one build, in dut_out_dir of the checkout at sdk_dest. Otherwise every
+# entry is built, and dut_app_active names the one to run.
+#
+#   out_dir  output directory, relative to the build's checkout
+#   gn_args  shell words handed to gn (optional); a string value needs its quotes
+#            escaped, as in: chip_x=\"y\"
+#   src      the build's own checkout (optional; default sdk_dest)
+#   remote   repository to clone into src (optional; default sdk_repo)
+#   ref      branch, tag or commit to check out in src
+#
+# A build that differs only in gn_args shares sdk_dest. A build from a different
+# ref needs a src of its own, ref and src being given together, because a checkout
+# holds one revision; no two builds may share one. It gets its own submodules and pigweed environment, so
+# expect the time and disk of a first build.
+#
+#   dut_app_builds:
+#     plain: {out_dir: "out/plain"}
+#     patched:
+#       src: "/home/ubuntu/connectedhomeip-patched"
+#       remote: "https://github.com/you/connectedhomeip.git"
+#       ref: "your-branch"
+#       out_dir: "out/debug"
+#   dut_app_active: "plain"
+#
+# In boot mode, switching on the Pi is one command, with no Ansible involved:
+#   sudo matter-dut-use patched
+# Re-running the 'run' tag goes back to dut_app_active.
+dut_app_builds: {}
+dut_app_active: ""
+
+# Resolved from the above. Tasks read these rather than dut_out_dir, so an empty
+# dut_app_builds and a populated one behave the same to everything downstream.
+dut_builds_effective: >-
+  {{ dut_app_builds | dict2items if dut_app_builds | length > 0
+     else [{'key': 'default', 'value': {'out_dir': dut_out_dir}}] }}
+dut_active_dir: >-
+  {{ ((dut_app_builds[dut_app_active].src | default(sdk_dest)) ~ '/' ~ dut_app_builds[dut_app_active].out_dir)
+     if dut_app_builds | length > 0
+     else (sdk_dest ~ '/' ~ dut_out_dir) }}
+
 # Commissioning parameters (dut_pairing_mode / dut_discriminator /
 # dut_setup_code) live in group_vars/all.yml, because both this playbook's
 # 'run' tag and th-run.yml need them and they must not drift. If you are

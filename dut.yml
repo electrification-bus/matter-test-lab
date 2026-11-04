@@ -11,6 +11,10 @@
 #   Just (re)launch the DUT app:  ansible-playbook dut.yml --tags run
 #   Build only, don't launch:     ansible-playbook dut.yml --tags build
 #
+# With dut_boot_mode set, the app is a persistent unit that starts at boot with
+# wiped storage, and dut_app_builds keeps several builds side by side. See
+# "Unattended DUT" in README.md.
+#
 # Tags: verify | build (prereqs + clone + compile) | apt | run (launch the app)
 # The build is long the first time (submodules + pigweed bootstrap + compile,
 # 45-90 min on a Pi 5); idempotent, re-runs skip the compile if the binary exists.
@@ -38,6 +42,40 @@
         success_msg: >-
           SDK {{ sdk_version_effective | trim }} (lab_mode={{ lab_mode }})
         quiet: true
+      tags: [verify, build]
+
+    - name: Require the active build to be one of the configured builds
+      ansible.builtin.assert:
+        that: dut_app_active in dut_app_builds
+        fail_msg: >-
+          dut_app_builds is set, so dut_app_active must name one of its keys
+          ({{ dut_app_builds | list | join(', ') }}); it is "{{ dut_app_active }}".
+        quiet: true
+      when: dut_app_builds | length > 0
+      tags: [verify, build, run]
+
+    - name: Require a checkout of its own for a build from its own ref
+      ansible.builtin.assert:
+        that:
+          - (item.value.ref is defined) == (item.value.src is defined)
+          - item.value.remote is not defined or item.value.ref is defined
+          - (item.value.src | default('') | regex_replace('/+$', '')) != (sdk_dest | regex_replace('/+$', ''))
+          - >-
+            dut_builds_effective | map(attribute='value') | selectattr('src', 'defined')
+            | map(attribute='src') | map('regex_replace', '/+$', '') | select('eq', item.value.src | default('') | regex_replace('/+$', ''))
+            | list | length <= 1
+          - >-
+            item.value.src is defined or
+            dut_builds_effective | map(attribute='value') | selectattr('src', 'undefined')
+            | selectattr('out_dir', 'eq', item.value.out_dir) | list | length == 1
+        fail_msg: >-
+          dut_app_builds.{{ item.key }}: ref and src go together, remote needs them,
+          src must be neither sdk_dest nor another build's, because a checkout holds
+          one revision, and no two builds in one checkout may share an out_dir.
+        quiet: true
+      loop: "{{ dut_builds_effective }}"
+      loop_control:
+        label: "{{ item.key }}"
       tags: [verify, build]
 
     - name: Verify we're on the intended, correctly-flashed Pi
@@ -101,12 +139,29 @@
       register: sdk_clone
       tags: [build]
 
+    - name: Clone the builds that come from their own ref
+      ansible.builtin.git:
+        repo: "{{ item.value.remote | default(sdk_repo) }}"
+        dest: "{{ item.value.src }}"
+        version: "{{ item.value.ref }}"
+        recursive: false
+        force: false
+      loop: "{{ dut_builds_effective }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.value.ref is defined
+      register: sdk_clone_builds
+      tags: [build]
+
     - name: Check out only the Linux-platform submodules (shallow; far faster than all)
       ansible.builtin.command:
         cmd: "python3 scripts/checkout_submodules.py --shallow --platform linux"
-        chdir: "{{ sdk_dest }}"
+        chdir: "{{ item }}"
+      loop: >-
+        {{ ([sdk_dest] + (dut_builds_effective | map(attribute='value')
+           | selectattr('src', 'defined') | map(attribute='src') | list)) | unique }}
       register: submodule_checkout
-      changed_when: "'Checking out' in submodule_checkout.stdout or sdk_clone.changed"
+      changed_when: "'Checking out' in submodule_checkout.stdout or sdk_clone.changed or sdk_clone_builds.changed"
       tags: [build]
 
     # activate.sh reuses the existing .environment, which belongs to the SDK
@@ -138,9 +193,12 @@
             source scripts/bootstrap.sh &&
             git rev-parse HEAD > .environment/.bootstrapped-sdk-revision;
           fi &&
-          ./scripts/examples/gn_build_example.sh {{ dut_example_path }} {{ dut_out_dir }}
-        chdir: "{{ sdk_dest }}"
+          ./scripts/examples/gn_build_example.sh {{ dut_example_path }} {{ item.value.out_dir }} {{ item.value.gn_args | default('') }}
+        chdir: "{{ item.value.src | default(sdk_dest) }}"
         executable: /bin/bash
+      loop: "{{ dut_builds_effective }}"
+      loop_control:
+        label: "{{ item.key }}"
       register: build_result
       changed_when: "'ninja: no work to do' not in build_result.stdout"
       async: 7200
@@ -149,16 +207,34 @@
 
     - name: Confirm the DUT binary exists
       ansible.builtin.stat:
-        path: "{{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}"
+        path: "{{ item.value.src | default(sdk_dest) }}/{{ item.value.out_dir }}/{{ dut_app_binary }}"
+      loop: "{{ dut_builds_effective }}"
+      loop_control:
+        label: "{{ item.key }}"
       register: dut_bin
       tags: [build]
 
     - name: Report DUT build result
       ansible.builtin.debug:
         msg: >-
-          {{ dut_app_binary }} built at {{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}
-          (exists={{ dut_bin.stat.exists }}).
+          {{ item.item.key }}: {{ dut_app_binary }} built at {{ item.item.value.src | default(sdk_dest) }}/{{ item.item.value.out_dir }}/{{ dut_app_binary }}
+          (exists={{ item.stat.exists }}).
+      loop: "{{ dut_bin.results }}"
+      loop_control:
+        label: "{{ item.item.key }}"
       tags: [build]
+
+    # Before anything below stops the running DUT.
+    - name: Require every build's binary before pointing a boot unit at one
+      ansible.builtin.stat:
+        path: "{{ item.value.src | default(sdk_dest) }}/{{ item.value.out_dir }}/{{ dut_app_binary }}"
+      loop: "{{ dut_builds_effective }}"
+      loop_control:
+        label: "{{ item.key }}"
+      register: _dut_boot_bins
+      failed_when: not _dut_boot_bins.stat.exists
+      when: dut_boot_mode | bool
+      tags: [run]
 
     # --- Launch the DUT app as a transient systemd unit, fresh (unprovisioned) so
     # it advertises as commissionable. Discriminator/setup-code come from group_vars.
@@ -211,6 +287,52 @@
       changed_when: false
       tags: [run]
 
+    # A persistent unit of this name, left by an earlier run with dut_boot_mode
+    # set, makes the systemd-run below fail with "already loaded or has a fragment
+    # file". The name is shared on purpose: the probes below and reliability.yml
+    # all address the app as matter-dut, however it was started.
+    - name: Remove the persistent DUT unit when boot mode is off
+      become: true
+      when: not dut_boot_mode | bool
+      tags: [run]
+      block:
+        - name: Check for a persistent DUT unit
+          ansible.builtin.stat:
+            path: /etc/systemd/system/matter-dut.service
+          register: _dut_unit_file
+
+        - name: Disable the persistent DUT unit
+          ansible.builtin.systemd_service:
+            name: matter-dut
+            enabled: false
+          when: _dut_unit_file.stat.exists
+
+        - name: Remove the persistent DUT unit and its helpers
+          ansible.builtin.file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/systemd/system/matter-dut.service
+            - "{{ dut_start_script }}"
+            - "{{ dut_switch_script }}"
+            - "{{ dut_app_link }}"
+
+        - name: Reload systemd after removing the persistent DUT unit
+          ansible.builtin.systemd_service:
+            daemon_reload: true
+          when: _dut_unit_file.stat.exists
+
+        - name: Give automatic apt runs back to a DUT leaving boot mode
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            masked: false
+            enabled: true
+            state: started
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+          when: _dut_unit_file.stat.exists
+
     # The app logs every mDNS packet it hears, so on a busy network it exceeds
     # journald's per-unit rate limit within seconds of starting. journald then
     # drops its startup lines, including the advertising banner the next task
@@ -221,12 +343,151 @@
         cmd: >-
           systemd-run --unit=matter-dut --working-directory=/tmp
           -p LogRateLimitIntervalSec=0
-          {{ sdk_dest }}/{{ dut_out_dir }}/{{ dut_app_binary }}
+          {{ dut_active_dir }}/{{ dut_app_binary }}
           --discriminator {{ dut_discriminator }} --passcode {{ dut_setup_code }}
           {{ dut_app_extra_args }}
+      when: not dut_boot_mode | bool
       # Starting a transient unit is always a change.
       changed_when: true
       tags: [run]
+
+    - name: Install the boot-mode DUT
+      become: true
+      when: dut_boot_mode | bool
+      tags: [run]
+      block:
+        # apt_prepare only stops these until the next boot. Left alone, they start
+        # upgrading packages minutes after a boot, kernel and firmware included,
+        # holding the dpkg lock while tests run. needrestart then restarts this unit
+        # for its upgraded libraries, and that wipes the DUT: a commissioned device
+        # silently loses its fabric. A DUT restarted by pulling its plug can also lose
+        # power in the middle of dpkg.
+        - name: Turn off automatic apt runs on an unattended DUT
+          ansible.builtin.systemd_service:
+            name: "{{ item }}"
+            state: stopped
+            enabled: false
+            masked: true
+          loop:
+            - apt-daily.timer
+            - apt-daily-upgrade.timer
+
+        - name: Point the active-build link at the selected build
+          ansible.builtin.file:
+            src: "{{ dut_active_dir }}"
+            dest: "{{ dut_app_link }}"
+            state: link
+            force: true
+
+        # The wait is load-bearing. Minimal mDNS only listens on interfaces that
+        # have an address of that family when it starts (AllInterfaces in
+        # src/lib/dnssd/minimal_mdns/AddressPolicy_DefaultImpl.cpp), and nothing in
+        # DnssdServer restarts it when one appears later (src/app/server/Dnssd.cpp
+        # OnPlatformEvent). An app that wins the race against the cable or DHCP
+        # would run without advertising until the next restart, and power cycling
+        # would not reliably cure it. This wait replaces network-online.target, which
+        # holds up boot without knowing about the one interface that matters here.
+        #
+        # There is no bound on waiting for the link, because without one there is
+        # nothing to advertise on. IPv4 is bounded, because Matter does not need it
+        # and a network without DHCP must still come up on link-local IPv6.
+        #
+        # The wipe is on every start rather than only at boot, so that a switch of
+        # builds or a restart also yields a clean, commissionable DUT.
+        - name: Install the DUT start script
+          ansible.builtin.copy:
+            dest: "{{ dut_start_script }}"
+            mode: "0755"
+            content: |
+              #!/bin/bash
+              set -euo pipefail
+              IFACE={{ dut_lan_interface | quote }}
+
+              waited=0
+              until [ "$(cat "/sys/class/net/$IFACE/carrier" 2>/dev/null)" = 1 ] &&
+                    [ -n "$(ip -6 -o addr show dev "$IFACE" scope link -tentative 2>/dev/null)" ]; do
+                [ $((waited % 60)) -eq 0 ] && echo "waiting for link and a link-local address on $IFACE"
+                sleep 1
+                waited=$((waited + 1))
+              done
+              for _ in $(seq 1 {{ dut_boot_ipv4_wait }}); do
+                [ -n "$(ip -4 -o addr show dev "$IFACE" 2>/dev/null)" ] && break
+                sleep 1
+              done
+
+              rm -f /tmp/chip_*
+
+              exec {{ dut_app_link }}/{{ dut_app_binary }} \
+                --discriminator {{ dut_discriminator }} --passcode {{ dut_setup_code }} \
+                {{ dut_app_extra_args }}
+
+        - name: Install the build switch command
+          ansible.builtin.copy:
+            dest: "{{ dut_switch_script }}"
+            mode: "0755"
+            content: |
+              #!/bin/bash
+              # {{ dut_switch_script | basename }} [build]: show the builds, or switch to one.
+              # Takes effect at once and survives a reboot. The DUT comes back clean,
+              # so anything commissioned to it has to commission again.
+              set -euo pipefail
+              LINK={{ dut_app_link | quote }}
+              case "${1:-}" in
+              {% for build in dut_builds_effective %}
+                {{ build.key | quote }}) TARGET={{ ((build.value.src | default(sdk_dest)) ~ '/' ~ build.value.out_dir) | quote }} ;;
+              {% endfor %}
+                "")
+              {% for build in dut_builds_effective %}
+                  echo {{ build.key | quote }}={{ ((build.value.src | default(sdk_dest)) ~ '/' ~ build.value.out_dir) | quote }}
+              {% endfor %}
+                  echo "active: $(readlink "$LINK")"
+                  exit 0
+                  ;;
+                *) echo "unknown build: $1" >&2; exit 2 ;;
+              esac
+              [ -x "$TARGET/{{ dut_app_binary }}" ] || { echo "not built: $TARGET" >&2; exit 1; }
+              systemctl stop matter-dut
+              # A copy started outside systemd would keep port 5540 from the new one.
+              pkill -f '[{{ dut_app_binary[0] }}]{{ dut_app_binary[1:] }}' || true
+              ln -sfn "$TARGET" "$LINK"
+              systemctl start matter-dut
+              sleep 3
+              systemctl --quiet is-active matter-dut || { echo "matter-dut did not stay up" >&2; exit 1; }
+              echo "active: $TARGET"
+
+        # Never gives up: an unattended DUT has no one to run reset-failed.
+        - name: Install the persistent DUT unit
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/matter-dut.service
+            mode: "0644"
+            content: |
+              [Unit]
+              Description=Matter DUT example app, clean on every start
+              Wants=avahi-daemon.service
+              After=network.target avahi-daemon.service
+              StartLimitIntervalSec=0
+
+              [Service]
+              WorkingDirectory=/tmp
+              ExecStart={{ dut_start_script }}
+              Restart=always
+              RestartSec=5
+              LogRateLimitIntervalSec=0
+
+              [Install]
+              WantedBy=multi-user.target
+
+        - name: Enable the persistent DUT unit
+          ansible.builtin.systemd_service:
+            name: matter-dut
+            enabled: true
+            daemon_reload: true
+
+        # Stopped above, so this always starts it fresh on the files just written.
+        - name: Start the persistent DUT unit
+          ansible.builtin.systemd_service:
+            name: matter-dut
+            state: started
 
     - name: Wait for the DUT to advertise as commissionable
       become: true
@@ -256,7 +517,7 @@
       ansible.builtin.shell: |
         set -uo pipefail
         INV=$(systemctl show matter-dut -p InvocationID --value)
-        for _ in $(seq 1 20); do
+        for _ in $(seq 1 {{ 20 + (dut_boot_ipv4_wait | int if dut_boot_mode | bool else 0) }}); do
           LOG=$(journalctl _SYSTEMD_INVOCATION_ID="$INV" --no-pager 2>/dev/null || true)
           case "$LOG" in
             *"Advertise commission parameter"*) exit 0 ;;
@@ -264,7 +525,7 @@
           esac
           sleep 1
         done
-        echo "DUT did not start advertising within 20s" >&2
+        echo "DUT did not start advertising in time" >&2
         journalctl _SYSTEMD_INVOCATION_ID="$INV" --no-pager 2>/dev/null | tail -20 >&2
         exit 1
       args:

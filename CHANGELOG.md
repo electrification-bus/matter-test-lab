@@ -6,10 +6,13 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) lo
 
 ## Unreleased
 
-Moving a working lab from one test event's coordinates to the next one's, which had never been exercised end to end. Everything here was found by doing it on real hardware, and each fault presented as something other than its cause.
+Most of this comes from moving a working lab from one test event's coordinates to the next one's, which had never been exercised end to end. Those faults were found by doing it on real hardware, and each presented as something other than its cause.
 
 ### Added
 
+- `tailscale.yml`, off by default and enabled per host, for reaching a Pi on a network you do not control. The auth key comes from the environment or a vaulted value, and is given to `tailscale up` as a root-only file removed after the join.
+- `dut_boot_mode` on `dut.yml`: the app becomes a persistent `matter-dut` unit that wipes its storage on every start, so power cycling always yields a clean, commissionable DUT. It masks the automatic apt timers. It waits for the LAN interface first, because minimal mDNS only listens on interfaces that already have an address when it starts, and nothing restarts it when one appears.
+- `dut_app_builds` and `dut_app_active` on `dut.yml`, for several builds of the app side by side, optionally from different remotes and refs, and in boot mode `matter-dut-use <build>` on the Pi to switch between them.
 - `wifi.yml`, which joins the Pis to a WiFi network on `wlan0` without touching `eth0`, sets the regulatory domain, and turns off WiFi power save. The network comes from `host_vars/`; the repository ships no credentials. A CSA training that runs on venue WiFi is the case it was written for.
 - `AGENTS.md`, holding the agent guidance that was in `CLAUDE.md`, so agents other than Claude Code read it too. `CLAUDE.md` now only imports it.
 - `th-run.yml` runs each case in `th_tests` as its own Test Harness run and fetches that run's log as it finishes, rather than batching them. The Harness logs per run and has no per-case export, so a run covering ten cases produced one log covering ten cases, which is not what result submission wants and not something a reviewer can read. It also now summarizes every case's outcome and fails the play if any did not pass, instead of leaving that in the scrollback.
@@ -27,6 +30,7 @@ Moving a working lab from one test event's coordinates to the next one's, which 
 
 ### Fixed
 
+- `th-run.yml` and `reliability.yml` exited 0 having run nothing when the inventory had no Test Harness, which is what an `ANSIBLE_CONFIG` exported for another project produces. A result of no results read as a clean run. Both now fail first and name the cause, unless `--limit` excludes the check.
 - `dut.yml` skipped the build whenever the app binary existed, so after the SDK checkout moved it relaunched a binary from whatever revision last built it, and reported it as built. The build now always runs and ninja decides what is out of date.
 - `dut.yml` could report a DUT that was advertising as having failed to come up. The app logs every mDNS packet it hears, so on a busy network it exceeds journald's per-unit rate limit within seconds and journald drops its startup lines, including the banner the readiness probe waits for. The unit now runs with no log rate limit.
 - `th-run.yml` reported "no result line" for every case on Test Harness v2.15, whose `th-cli` no longer prints `Results:`. It now also reads the closing `Test Run [<state>]` line.

@@ -23,3 +23,21 @@
 # dut_example_path: "examples/lighting-app/linux"
 # dut_out_dir: "out/debug"
 # dut_app_binary: "chip-lighting-app"
+
+# Start at boot with wiped storage, for a DUT restarted by unplugging it.
+# dut_boot_mode: true
+
+# Several builds side by side. See group_vars/dut.yml.
+# dut_app_builds:
+#   plain: {out_dir: "out/plain"}
+#   patched:
+#     src: "/home/ubuntu/connectedhomeip-patched"
+#     remote: "https://github.com/you/connectedhomeip.git"
+#     ref: "your-branch"
+#     out_dir: "out/debug"
+# dut_app_active: "plain"
+
+# Remote access, with tailscale.yml. The auth key comes from TS_AUTHKEY or a
+# vaulted tailscale_authkey here.
+# tailscale_enabled: true
+# tailscale_tag: "tag:lab"

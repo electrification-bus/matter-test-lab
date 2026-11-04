@@ -17,3 +17,8 @@
 
 # The Test Harness tag your test event pins. Required when lab_mode is "event".
 # th_version: "v2.14+fall2025-tag"
+
+# Remote access, with tailscale.yml. The auth key comes from TS_AUTHKEY or a
+# vaulted tailscale_authkey here.
+# tailscale_enabled: true
+# tailscale_tag: "tag:lab"

@@ -38,7 +38,7 @@ The development-mode defaults are a different thing and are fine: `th_version_de
 Two traps, both of which make the playbooks appear broken:
 
 1. **There is no `inventory.ini` in a fresh clone.** It is gitignored; the template is `examples/inventory.ini`. Without it you get "Could not match supplied host pattern".
-2. **`ANSIBLE_CONFIG` exported for another project wins** over this repo's `ansible.cfg`, with the same symptom.
+2. **`ANSIBLE_CONFIG` exported for another project wins** over this repo's `ansible.cfg`, with the same symptom, or with a play that matches no hosts and exits 0. `th-run.yml` and `reliability.yml` fail on that first (unless `--limit` excludes the check), because a run that did nothing must not read as a pass.
 
 Both are handled by:
 
@@ -101,6 +101,12 @@ The next five all came out of one job, moving a working lab from one test event'
 - **Under `pipefail`, `producer | grep -q` reports failure exactly when it succeeds.** `grep -q` exits on the first match, the producer takes SIGPIPE, and its 141 becomes the pipeline's status. Read into a variable and match with `case` instead. This is not hypothetical: it silently broke the DUT readiness probe on every run.
 - **Log strings in `src/app/tests/suites/certification/*.yaml` are fixtures, not contracts,** and `journalctl -u <unit>` is not scoped to the current launch. The readiness probe matched "CHIP minimal mDNS started advertising", which survives only in those old fixtures, while the line current source logs is "Advertise commission parameter" from `src/app/server/Dnssd.cpp`. Unscoped reads are also wrong as well as slow: a previous launch's banner can be read as this one's, so a DUT that failed to come up reports as ready. Scope to the unit's `InvocationID`, and check what current source emits before probing for it.
 
+Two more, from making the DUT unattended:
+
+- **A reboot brings the automatic apt timers back, and `needrestart` restarts a running DUT.** `apt_prepare` only stops the timers until the next boot. The first reboot in boot mode started a full upgrade within minutes, and `needrestart` restarted `matter-dut` part way through, which in boot mode is a wipe. Boot mode masks the timers for that reason; keep them masked.
+
+- **`--interface-id` does nothing on a default DUT build.** Only the platform mDNS advertiser reads it; `gn_build_example.sh` gets minimal mDNS. Minimal mDNS answers on each interface with that interface's addresses (`src/lib/dnssd/minimal_mdns/responders/IP.cpp`), so tailnet addresses stay off the LAN regardless. Measured with and without the flag: `eth0` carried none, `tailscale0` carried them either way.
+
 ## Layout
 
 | Path | Role |
@@ -110,6 +116,7 @@ The next five all came out of one job, moving a working lab from one test event'
 | `th-run.yml` | Run tests via `th-cli`, fetch logs. |
 | `bootstrap-keys.yml` | Key onboarding for a Pi flashed another way. |
 | `wifi.yml` | Join the Pis to a WiFi network you supply. |
+| `tailscale.yml` | Join the Pis to a tailnet you supply. |
 | `flash-pi` | macOS SD card flasher with cloud-init pre-seed. |
 | `group_vars/` | All settings; `th.yml` and `dut.yml` hold the two you must supply. |
 | `examples/` | Templates for the gitignored `inventory.ini` and `host_vars/`. |

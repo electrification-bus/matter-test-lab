@@ -97,6 +97,25 @@ wifi_ssid: ""
 wifi_password: ""
 wifi_regdom: ""
 
+# --- Tailscale (tailscale.yml) -------------------------------------------------
+# Remote access for a Pi on a network you do not control. Off by default, and set
+# per host in host_vars/.
+tailscale_enabled: false
+
+# Used once, to join; a re-run on a joined node does not need it. Comes from the
+# environment or from a vaulted value in host_vars/, and is never committed.
+#
+# Do not use an ephemeral key on a Pi that will be powered off for any length of
+# time: an ephemeral node is deleted from the tailnet once it has been offline.
+tailscale_authkey: "{{ lookup('ansible.builtin.env', 'TS_AUTHKEY') }}"
+
+# Optional, e.g. "tag:lab". Must be one the key is allowed to use. Applied only
+# when joining: changing it on a joined node takes a re-auth with a new key. Keep
+# it set once joined, because "tailscale up" refuses to drop a tag silently.
+tailscale_tag: ""
+tailscale_hostname: "{{ inventory_hostname_short }}"
+tailscale_ssh: true
+
 # --- Log collection ----------------------------------------------------------
 
 # Where th-run.yml stages fetched logs on the control machine. Gitignored, so
@@ -131,7 +150,8 @@ reliability_sleep: 2
 reliability_timeout: 1800
 
 # The DUT binary as the DUT sees it. Leave empty to compose it from the [dut]
-# group's own sdk_dest / dut_out_dir / dut_app_binary; set it when the app the
+# group's own active build (in boot mode, whichever matter-dut-use last selected)
+# and dut_app_binary; set it when the app the
 # reliability run should exercise is not the one dut.yml builds.
 reliability_app_path: ""
 

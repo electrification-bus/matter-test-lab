@@ -217,9 +217,67 @@ Logs land in `./results/` (gitignored), one run log and one grouped archive per 
 | `th-run.yml` | Drives `th-cli` over SSH to run a test or list of tests headlessly, then fetches the grouped archive, run log and trace logs. | `run`, `collect` |
 | `bootstrap-keys.yml` | Installs your SSH key on a Pi flashed some other way. Not needed after `flash-pi`. | |
 | `wifi.yml` | Joins both Pis to a WiFi network on `wlan0`, leaving `eth0` as it is, and turns off WiFi power save. `-e wifi_state=absent` removes it. | |
+| `tailscale.yml` | Joins a Pi with `tailscale_enabled` to your tailnet, surviving reboots. `-e tailscale_state=absent` removes it. See [Remote access](#remote-access-tailscale). | `verify` |
 | `reliability.yml` | Installs the matter-qa reliability/stress scripts (`TC_RT_*`) into the Test Harness and runs them. You supply the matter-qa checkout. See [docs/reliability.md](docs/reliability.md). | `install`, `run` |
 
 Every playbook starts by asserting it is talking to the intended, correctly-flashed Pi: login user, OS version and release, architecture, hostname, and that the configured MAC actually belongs to that machine. A wrong or stale flash fails in seconds instead of 45 minutes into a build.
+
+## Unattended DUT
+
+For a DUT someone else will restart by unplugging it, set `dut_boot_mode: true` and run `ansible-playbook dut.yml --tags run`. The app becomes a persistent `matter-dut` unit that waits for its interface, wipes its storage and starts at every boot, so a power cycle always yields a clean, commissionable DUT. The wipe is on every unit start, so a crash also comes back uncommissioned; the journal keeps the evidence. As after any relaunch, the next Test Harness run needs `th_commission_first=true`. The wait for the interface has no limit, so a DUT on WiFi must set `dut_lan_interface: wlan0`. Boot mode also masks the automatic apt timers, because they would otherwise upgrade packages minutes after a boot. `needrestart` then restarts the unit, which wipes a commissioned DUT, and a pulled plug could interrupt dpkg. Apply updates yourself; turning boot mode off restores the timers.
+
+To keep more than one build of the app, set `dut_app_builds` and `dut_app_active` (`group_vars/dut.yml`). `dut.yml` builds them all, each in its own output directory; a build can also come from its own remote and ref, in a checkout of its own. In boot mode, switch between them on the Pi:
+
+```bash
+sudo matter-dut-use          # list the builds and show the active one
+sudo matter-dut-use <build>  # switch and restart; survives a reboot
+```
+
+Re-running `--tags run` goes back to `dut_app_active`. Setting `dut_boot_mode: false` and re-running it removes the persistent unit.
+
+## Remote access (Tailscale)
+
+For reaching a Pi that sits on a network you do not control, such as a DUT shipped to a test lab. It is off by default and needs no inbound firewall rules on that network. A Pi that stays on your own LAN does not need it.
+
+**Once, in your Tailscale account.** Sign in at [login.tailscale.com](https://login.tailscale.com) and install Tailscale on the machine you will connect from. Then:
+
+1. Under **Access controls**, define a tag for the Pi, and allow yourself to SSH to it as `ubuntu`:
+
+   ```json
+   "tagOwners": { "tag:lab": ["autogroup:admin"] },
+   "ssh": [{ "action": "accept", "src": ["autogroup:admin"], "dst": ["tag:lab"], "users": ["ubuntu"] }]
+   ```
+
+2. Under **Settings > Keys**, generate an auth key with **Tags** set to that tag and **Ephemeral off**. An ephemeral node is removed from the tailnet when it goes offline, which a Pi in a shipping box is. Tagged nodes have node key expiry off by default, so the Pi does not drop off during a long deployment. The auth key's own expiry only has to outlast the join.
+
+3. Keep the key out of shell history and out of the repository: save it to a file only you can read, or use a vaulted `tailscale_authkey` in `host_vars/`.
+
+**For each Pi.** In `host_vars/<host>.yml`:
+
+```yaml
+tailscale_enabled: true
+tailscale_tag: "tag:lab"
+# tailscale_hostname: "my-dut"   # defaults to the inventory name
+```
+
+Then, while the Pi is still on a network you can reach:
+
+```bash
+TS_AUTHKEY="$(cat <keyfile>)" ansible-playbook tailscale.yml --limit <host>
+ansible-playbook tailscale.yml --limit <host> --tags verify
+```
+
+The key is needed once. The Pi rejoins by itself after every reboot, on any network with outbound internet access.
+
+**Connecting.** `tailscale.yml` reports the Pi's tailnet address, and `tailscale status` lists it on your own machine:
+
+```bash
+ssh ubuntu@<tailnet-address>
+```
+
+To run a playbook over the tailnet, add `-e ansible_host=<tailnet-address>`. To remove Tailscale, run `ansible-playbook tailscale.yml --limit <host> -e tailscale_state=absent` over the LAN; it refuses to run over the tailnet, since it would cut itself off.
+
+**What it does not change.** The node's DNS is left alone (`--accept-dns=false`), so the Pi resolves names as the network it sits on tells it to. Joining adds `tailscale0` without changing what the DUT advertises on the LAN: a default DUT build uses minimal mDNS, which answers on each interface with that interface's addresses, and a capture on `eth0` of a DUT on a tailnet showed only its `eth0` addresses. The app's `--interface-id` makes no difference to this; the minimal advertiser never reads it.
 
 ## Bringing your own DUT
 
@@ -284,6 +342,7 @@ The reference DUT that `dut.yml` builds is still worth having. It is a known-goo
 | `flash-pi` | SD card flasher (macOS): cached download, safe disk pick, cloud-init pre-seed. |
 | `bootstrap-keys.yml` | Install your SSH key on a Pi flashed another way. |
 | `wifi.yml` | Join the Pis to a WiFi network. |
+| `tailscale.yml` | Join the Pis to a tailnet. |
 | `ansible.cfg` / `setup-env.sh` | Connection defaults; source `setup-env.sh` first. |
 | `docs/pi-image-quirks.md` | The two Pi Ubuntu image quirks and why they are handled. |
 | `docs/pics.md` | Why you need a PICS, deriving one from the device rather than by hand, and the two layouts. |

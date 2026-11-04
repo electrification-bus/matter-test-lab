@@ -18,6 +18,22 @@
 # defined by your own test event; this repo does not encode any submission
 # process.
 
+# With an ANSIBLE_CONFIG exported for another project, the inventory has no [th]
+# group, the plays below match no hosts, and the run exits 0 having done nothing.
+- name: Require a Test Harness in the inventory
+  hosts: localhost
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: Fail if the inventory has no Test Harness
+      ansible.builtin.assert:
+        that: groups['th'] | default([]) | length > 0
+        fail_msg: >-
+          The inventory has no [th] group, so nothing would run. Run
+          "source setup-env.sh" in this repo, and create inventory.ini from
+          examples/inventory.ini if it is missing.
+        quiet: true
+
 - name: Run certification test(s) via th-cli and collect logs
   hosts: th
   gather_facts: true

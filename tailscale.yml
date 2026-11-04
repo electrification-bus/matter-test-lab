@@ -1,0 +1,215 @@
+---
+# Join a Pi to a tailnet for remote access, for a lab on a network you do not
+# control. Off by default: only hosts with tailscale_enabled are joined. ACLs are
+# yours to set in the admin console.
+#
+# The node stays joined across reboots: tailscaled is enabled, and it keeps its
+# identity in /var/lib/tailscale. See "Remote access" in README.md.
+#
+# Run:     TS_AUTHKEY="$(cat <keyfile>)" ansible-playbook tailscale.yml --limit <host>
+# Check:   ansible-playbook tailscale.yml --limit <host> --tags verify
+# Remove:  ansible-playbook tailscale.yml --limit <host> -e tailscale_state=absent
+#          (over the LAN: removal drops the tailnet, and an SSH session through it)
+
+- name: Tailscale
+  hosts: all
+  gather_facts: true
+  vars:
+    tailscale_state: present
+    tailscale_keyring: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    tailscale_repo: >-
+      deb [signed-by={{ tailscale_keyring }}]
+      https://pkgs.tailscale.com/stable/ubuntu {{ expected_ubuntu_release }} main
+    tailscale_authkey_file: /run/tailscale-authkey
+    # Left as the network gave it: MagicDNS would change how the Pi resolves names
+    # on the network it is there to test on.
+    tailscale_flags: >-
+      --hostname={{ tailscale_hostname | quote }}
+      --ssh={{ tailscale_ssh | bool | lower }}
+      --accept-dns=false
+  tasks:
+    - name: Say so when a host is skipped for not opting in
+      ansible.builtin.debug:
+        msg: tailscale_enabled is off for this host, so nothing is done or checked on it.
+      when: tailscale_state == 'present' and not tailscale_enabled | bool
+      tags: [always]
+
+    - name: Skip a host that has not opted in
+      ansible.builtin.meta: end_host
+      when: tailscale_state == 'present' and not tailscale_enabled | bool
+      tags: [always]
+
+    - name: Verify we're on the intended, correctly-flashed Pi
+      ansible.builtin.import_tasks: tasks/verify_target.yml
+      tags: [verify]
+
+    - name: Refuse to remove Tailscale through Tailscale
+      ansible.builtin.assert:
+        that: not (ansible_env.SSH_CONNECTION.split()[2] is match('^(100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.|fd7a:115c:a1e0:)'))
+        fail_msg: This session runs over the tailnet and removal would cut it off part way. Run it over the LAN.
+        quiet: true
+      when: tailscale_state == 'absent'
+
+    - name: Remove Tailscale
+      become: true
+      when: tailscale_state == 'absent'
+      block:
+        - name: Log the node out
+          ansible.builtin.command: tailscale logout
+          changed_when: true
+          failed_when: false
+
+        - name: Uninstall the package
+          ansible.builtin.apt:
+            name: tailscale
+            state: absent
+            purge: true
+            lock_timeout: 300
+
+        - name: Remove the apt repository
+          ansible.builtin.apt_repository:
+            repo: "{{ tailscale_repo }}"
+            filename: tailscale
+            state: absent
+
+        - name: Remove the signing key
+          ansible.builtin.file:
+            path: "{{ tailscale_keyring }}"
+            state: absent
+
+    - name: End the play on a host being removed
+      ansible.builtin.meta: end_host
+      when: tailscale_state == 'absent'
+
+    - name: Prepare apt (stop timers, wait for lock, enable pockets)
+      ansible.builtin.import_tasks: tasks/apt_prepare.yml
+
+    # Everything from here depends on a repository a dry run does not add.
+    - name: End a dry run here
+      ansible.builtin.meta: end_host
+      when: ansible_check_mode
+
+    - name: Install the Tailscale signing key
+      become: true
+      ansible.builtin.get_url:
+        url: "https://pkgs.tailscale.com/stable/ubuntu/{{ expected_ubuntu_release }}.noarmor.gpg"
+        dest: "{{ tailscale_keyring }}"
+        mode: "0644"
+
+    - name: Add the Tailscale apt repository
+      become: true
+      ansible.builtin.apt_repository:
+        repo: "{{ tailscale_repo }}"
+        filename: tailscale
+        state: present
+
+    - name: Install Tailscale
+      become: true
+      ansible.builtin.apt:
+        name: tailscale
+        state: present
+        update_cache: true
+        lock_timeout: 300
+
+    - name: Enable tailscaled at boot
+      become: true
+      ansible.builtin.systemd_service:
+        name: tailscaled
+        enabled: true
+        state: started
+
+    # tailscaled passes through NoState and Starting on its way up.
+    - name: Read the node's state
+      become: true
+      ansible.builtin.command: tailscale status --json --peers=false
+      register: _ts_before
+      changed_when: false
+      failed_when: false
+      until: _ts_before.rc == 0 and (_ts_before.stdout | from_json).BackendState not in ['NoState', 'Starting']
+      retries: 15
+      delay: 2
+
+    # A node that was joined and then stopped comes back without a key.
+    - name: Require an auth key on a node that has to log in
+      ansible.builtin.assert:
+        that: tailscale_authkey | length > 0
+        fail_msg: >-
+          This node has not joined a tailnet and tailscale_authkey is empty. Set
+          TS_AUTHKEY in the environment or a vaulted tailscale_authkey in
+          host_vars/; this repository ships no credentials.
+        quiet: true
+      when: (_ts_before.stdout | from_json).BackendState == 'NeedsLogin'
+
+    # The key goes in a file rather than on the command line, where it would be
+    # readable in the process list and would have to be hidden from every failure.
+    # Without --timeout, "up" blocks forever on a network it cannot get out of.
+    - name: Join the tailnet
+      become: true
+      when: (_ts_before.stdout | from_json).BackendState in ['NeedsLogin', 'Stopped']
+      block:
+        - name: Write the auth key where only root can read it
+          ansible.builtin.copy:
+            dest: "{{ tailscale_authkey_file }}"
+            content: "{{ tailscale_authkey }}"
+            mode: "0600"
+          no_log: true
+          when: (_ts_before.stdout | from_json).BackendState == 'NeedsLogin'
+
+        - name: Bring the node up
+          ansible.builtin.command:
+            cmd: >-
+              tailscale up {{ tailscale_flags }} --timeout=120s
+              {{ ('--auth-key=file:' ~ tailscale_authkey_file)
+                 if (_ts_before.stdout | from_json).BackendState == 'NeedsLogin' else '' }}
+              {{ ('--advertise-tags=' ~ tailscale_tag) if tailscale_tag | length > 0 else '' }}
+          changed_when: true
+      always:
+        - name: Remove the auth key file
+          ansible.builtin.file:
+            path: "{{ tailscale_authkey_file }}"
+            state: absent
+
+    # Reported as unchanged because the CLI does not say whether anything moved.
+    - name: Apply the settings to a node that was already up
+      become: true
+      ansible.builtin.command: tailscale set {{ tailscale_flags }}
+      changed_when: false
+      when: (_ts_before.stdout | from_json).BackendState == 'Running'
+
+    - name: Read the node's state again
+      become: true
+      ansible.builtin.command: tailscale status --json --peers=false
+      register: _ts_after
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [verify]
+
+    # systemd_service has no read-only form: it requires an action to take.
+    - name: Read whether tailscaled starts at boot
+      ansible.builtin.command: systemctl is-enabled tailscaled # noqa: command-instead-of-module
+      register: _ts_enabled
+      changed_when: false
+      failed_when: false
+      check_mode: false
+      tags: [verify]
+
+    - name: Require the node to be up and to survive a reboot
+      ansible.builtin.assert:
+        that:
+          - _ts_after.rc == 0
+          - (_ts_after.stdout | from_json).BackendState == 'Running'
+          - _ts_enabled.stdout | trim == 'enabled'
+        fail_msg: >-
+          Tailscale is not up on this host, or tailscaled is not enabled at boot.
+          status: {{ _ts_after.stdout | default('') | truncate(200) }}
+          is-enabled: {{ _ts_enabled.stdout | trim }}
+        quiet: true
+      tags: [verify]
+
+    - name: Report the node's tailnet addresses
+      ansible.builtin.debug:
+        msg: >-
+          {{ (_ts_after.stdout | from_json).Self.HostName }} is up at
+          {{ (_ts_after.stdout | from_json).Self.TailscaleIPs | join(', ') }}
+      tags: [verify]

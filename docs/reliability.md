@@ -59,7 +59,7 @@ All in `group_vars/all.yml`, all overridable with `-e`:
 | `reliability_tests` | `TC_RT_1_1` | comma-separated list is fine |
 | `reliability_iterations` | `25` | CSA suggests 25 for `TC_RT_1_1` |
 | `reliability_timeout` | `1800` | raise it with the iteration count |
-| `reliability_app_path` | *(empty)* | empty composes it from the `[dut]` group's own `sdk_dest`/`dut_out_dir`/`dut_app_binary` |
+| `reliability_app_path` | *(empty)* | empty composes it from the `[dut]` group's own active build and `dut_app_binary` |
 | `reliability_app_args` | `{}` | extra app arguments, as a **mapping** |
 | `reliability_matter_xml_root` | `/root/python_testing/data_model/1.7` | data model path **inside the runner container**; `TC_RT_1_2` and `TC_RT_2_1` need it |
 | `reliability_setup_payload` | `{}` | `setup_code` / `qr_code`, for cases that recommission rather than reuse (`TC_RT_2_1`) |

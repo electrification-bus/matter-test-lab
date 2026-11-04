@@ -17,6 +17,22 @@
 # matter-qa is a CSA member repository. This playbook does not clone it for
 # you: point reliability_src at your own checkout. See docs/reliability.md.
 
+# With an ANSIBLE_CONFIG exported for another project, the inventory has no [th]
+# group, the plays below match no hosts, and the run exits 0 having done nothing.
+- name: Require a Test Harness in the inventory
+  hosts: localhost
+  gather_facts: false
+  tags: [always]
+  tasks:
+    - name: Fail if the inventory has no Test Harness
+      ansible.builtin.assert:
+        that: groups['th'] | default([]) | length > 0
+        fail_msg: >-
+          The inventory has no [th] group, so nothing would run. Run
+          "source setup-env.sh" in this repo, and create inventory.ini from
+          examples/inventory.ini if it is missing.
+        quiet: true
+
 - name: Install the matter-qa reliability framework on the Test Harness
   hosts: th
   gather_facts: true
@@ -151,8 +167,8 @@
       vars:
         _app_path: >-
           {{ reliability_app_path if reliability_app_path | length > 0
-             else hostvars[_dut_host]['sdk_dest'] ~ '/'
-                  ~ hostvars[_dut_host]['dut_out_dir'] ~ '/'
+             else (hostvars[_dut_host]['dut_app_link'] if hostvars[_dut_host]['dut_boot_mode'] | bool
+                   else hostvars[_dut_host]['dut_active_dir']) ~ '/'
                   ~ hostvars[_dut_host]['dut_app_binary'] }}
 
     # Each of these is ONE Jinja expression returning a dict, not a mapping of
