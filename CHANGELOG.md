@@ -30,6 +30,7 @@ Most of this comes from moving a working lab from one test event's coordinates t
 
 ### Fixed
 
+- A Pi flashed with `flash-pi` could not be reached at the `<hostname>.local` the script promises, because the image does not include Avahi. Its cloud-init now installs `avahi-daemon`, and `th.yml` ensures Avahi as `dut.yml` already did.
 - `th-run.yml` and `reliability.yml` exited 0 having run nothing when the inventory had no Test Harness, which is what an `ANSIBLE_CONFIG` exported for another project produces. A result of no results read as a clean run. Both now fail first and name the cause, unless `--limit` excludes the check.
 - `dut.yml` skipped the build whenever the app binary existed, so after the SDK checkout moved it relaunched a binary from whatever revision last built it, and reported it as built. The build now always runs and ninja decides what is out of date.
 - `dut.yml` could report a DUT that was advertising as having failed to come up. The app logs every mDNS packet it hears, so on a busy network it exceeds journald's per-unit rate limit within seconds and journald drops its startup lines, including the banner the readiness probe waits for. The unit now runs with no log rate limit.

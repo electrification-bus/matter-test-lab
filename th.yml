@@ -59,6 +59,26 @@
         lock_timeout: 300
       tags: [install, update]
 
+    # The Harness resolves the DUT through Avahi, so do not leave it to whatever
+    # the upstream install script happens to pull in.
+    - name: Ensure Avahi (mDNS) is installed
+      become: true
+      ansible.builtin.apt:
+        state: present
+        lock_timeout: 300
+        name:
+          - avahi-daemon
+          - avahi-utils
+      tags: [install, update]
+
+    - name: Ensure avahi-daemon is running and enabled
+      become: true
+      ansible.builtin.systemd:
+        name: avahi-daemon
+        state: started
+        enabled: true
+      tags: [install, update]
+
     # Poetry is a prerequisite of BOTH the update path and th-cli: the update
     # runs update-setup-cli-dependencies.sh, which installs the Matter CLI with
     # Poetry and aborts the whole update with "Poetry could not be found" if it

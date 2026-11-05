@@ -154,6 +154,9 @@ users:
     ssh_authorized_keys:
       - $PUBKEY
 ssh_pwauth: false
+# Not in the image. Without it the Pi has no .local name to connect to.
+packages:
+  - avahi-daemon
 chpasswd:
   expire: false
   users:
