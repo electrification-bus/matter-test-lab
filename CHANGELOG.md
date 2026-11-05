@@ -10,6 +10,7 @@ Most of this comes from moving a working lab from one test event's coordinates t
 
 ### Added
 
+- `examples/inventory-tailscale.ini`, for running the playbooks off the LAN with `-i` and no per-command overrides.
 - `tailscale.yml`, off by default and enabled per host, for reaching a Pi on a network you do not control. The auth key comes from the environment or a vaulted value, and is given to `tailscale up` as a root-only file removed after the join.
 - `dut_boot_mode` on `dut.yml`: the app becomes a persistent `matter-dut` unit that wipes its storage on every start, so power cycling always yields a clean, commissionable DUT. It masks the automatic apt timers. It waits for the LAN interface first, because minimal mDNS only listens on interfaces that already have an address when it starts, and nothing restarts it when one appears.
 - `dut_app_builds` and `dut_app_active` on `dut.yml`, for several builds of the app side by side, optionally from different remotes and refs, and in boot mode `matter-dut-use <build>` on the Pi to switch between them.

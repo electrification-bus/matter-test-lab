@@ -1,5 +1,6 @@
 # Your hardware inventory (hostnames + MAC addresses) stays local.
 # Template: examples/inventory.ini
+/inventory-tailscale.ini
 /inventory.ini
 
 # Per-host overrides stay local. The whole directory is ignored rather than a

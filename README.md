@@ -275,7 +275,13 @@ The key is needed once. The Pi rejoins by itself after every reboot, on any netw
 ssh ubuntu@<tailnet-address>
 ```
 
-To run a playbook over the tailnet, add `-e ansible_host=<tailnet-address>`. To remove Tailscale, run `ansible-playbook tailscale.yml --limit <host> -e tailscale_state=absent` over the LAN; it refuses to run over the tailnet, since it would cut itself off.
+To run playbooks off the LAN, copy `examples/inventory-tailscale.ini` to `inventory-tailscale.ini`, which is gitignored, and select it with `-i`. Group names, `host_vars/` and the `verify_target` checks all stay as they are:
+
+```bash
+ansible-playbook -i inventory-tailscale.ini dut.yml --tags verify --limit <host>
+```
+
+Use `--limit`: `dut.yml` acts on every host in `[dut]`, and with `--tags run` that would restart and wipe them all. `th-run.yml` and `reliability.yml` stop at their inventory check when `[th]` is empty. To remove Tailscale, run `ansible-playbook tailscale.yml --limit <host> -e tailscale_state=absent` over the LAN; it refuses to run over the tailnet, since it would cut itself off.
 
 **What it does not change.** The node's DNS is left alone (`--accept-dns=false`), so the Pi resolves names as the network it sits on tells it to. Joining adds `tailscale0` without changing what the DUT advertises on the LAN: a default DUT build uses minimal mDNS, which answers on each interface with that interface's addresses, and a capture on `eth0` of a DUT on a tailnet showed only its `eth0` addresses. The app's `--interface-id` makes no difference to this; the minimal advertiser never reads it.
 
