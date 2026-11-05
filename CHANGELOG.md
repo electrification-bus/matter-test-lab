@@ -30,6 +30,7 @@ Most of this comes from moving a working lab from one test event's coordinates t
 
 ### Fixed
 
+- Every playbook failed on current Ansible, because `ansible.cfg` asked for the `yaml` output plugin that `community.general` 12 removed. It now uses the built-in equivalent.
 - A Pi flashed with `flash-pi` could not be reached at the `<hostname>.local` the script promises, because the image does not include Avahi. Its cloud-init now installs `avahi-daemon`, and `th.yml` ensures Avahi as `dut.yml` already did.
 - `th-run.yml` and `reliability.yml` exited 0 having run nothing when the inventory had no Test Harness, which is what an `ANSIBLE_CONFIG` exported for another project produces. A result of no results read as a clean run. Both now fail first and name the cause, unless `--limit` excludes the check.
 - `dut.yml` skipped the build whenever the app binary existed, so after the SDK checkout moved it relaunched a binary from whatever revision last built it, and reported it as built. The build now always runs and ninja decides what is out of date.
