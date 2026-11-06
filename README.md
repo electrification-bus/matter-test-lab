@@ -224,7 +224,11 @@ Every playbook starts by asserting it is talking to the intended, correctly-flas
 
 ## Unattended DUT
 
-For a DUT someone else will restart by unplugging it, set `dut_boot_mode: true` and run `ansible-playbook dut.yml --tags run`. The app becomes a persistent `matter-dut` unit that waits for its interface, wipes its storage and starts at every boot, so a power cycle always yields a clean, commissionable DUT. The wipe is on every unit start, so a crash also comes back uncommissioned; the journal keeps the evidence. As after any relaunch, the next Test Harness run needs `th_commission_first=true`. The wait for the interface has no limit, so a DUT on WiFi must set `dut_lan_interface: wlan0`. Boot mode also masks the automatic apt timers, because they would otherwise upgrade packages minutes after a boot. `needrestart` then restarts the unit, which wipes a commissioned DUT, and a pulled plug could interrupt dpkg. Apply updates yourself; turning boot mode off restores the timers.
+For a DUT someone else will restart by unplugging it, set `dut_boot_mode: true` and run `ansible-playbook dut.yml --tags run`. The app becomes a persistent `matter-dut` unit that waits for its interface, wipes its storage and starts at every boot, so a power cycle always yields a clean DUT, commissionable for the next 15 minutes. The wipe is on every unit start, so a crash also comes back uncommissioned; the journal keeps the evidence. As after any relaunch, the next Test Harness run needs `th_commission_first=true`.
+
+**The commissioning window closes 15 minutes after each start.** The app logs "Closing pairing window" and stops advertising, while the unit still reports `active`, so it reads as a network or device fault. Whoever has the DUT should power cycle it right before commissioning, or restart it remotely with `sudo systemctl restart matter-dut`.
+
+The wait for the interface has no limit, so a DUT on WiFi must set `dut_lan_interface: wlan0`. Boot mode also masks the automatic apt timers, because they would otherwise upgrade packages minutes after a boot. `needrestart` then restarts the unit, which wipes a commissioned DUT, and a pulled plug could interrupt dpkg. Apply updates yourself; turning boot mode off restores the timers.
 
 To keep more than one build of the app, set `dut_app_builds` and `dut_app_active` (`group_vars/dut.yml`). `dut.yml` builds them all, each in its own output directory; a build can also come from its own remote and ref, in a checkout of its own. In boot mode, switch between them on the Pi:
 

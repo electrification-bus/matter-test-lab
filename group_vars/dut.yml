@@ -66,7 +66,8 @@ dut_app_extra_args: ""
 #
 # Off: the 'run' tag launches a transient unit, which is gone after a reboot.
 # On: the 'run' tag installs matter-dut as a persistent unit that starts at boot
-# with wiped storage, so power cycling always yields a clean, commissionable DUT.
+# with wiped storage, so power cycling always yields a clean DUT. It is commissionable
+# for 15 minutes after each start, when the app closes its pairing window.
 # Either way the app is the unit "matter-dut". Turning this off and re-running
 # the 'run' tag removes the persistent unit.
 dut_boot_mode: false
